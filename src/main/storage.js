@@ -130,6 +130,8 @@ export const DEFAULT_SETTINGS = {
     fontSize: 14,
   },
   sendOnEnter: true,
+  updateCheck: true, // daily version check against GitHub Releases
+  skippedUpdateVersion: '', // release the user chose to ignore
   developerMode: false,
   onboardingComplete: false,
   sidebarWidth: 280,

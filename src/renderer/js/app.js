@@ -179,6 +179,27 @@ function bindShortcuts() {
   });
 }
 
+/** Dismissible banner shown when a newer release is found on GitHub. */
+function showUpdateBanner({ version, url }) {
+  document.getElementById('update-banner')?.remove();
+  const banner = el(
+    'div',
+    { id: 'update-banner', class: 'update-banner' },
+    el('span', {}, `OpenChat ${version} is available`),
+    el('button', { class: 'btn btn-primary', onclick: () => window.tavern.misc.openExternal(url) }, 'View Release'),
+    el('button', {
+      class: 'btn',
+      onclick: () => {
+        state.settings.skippedUpdateVersion = version;
+        scheduleSettingsSave();
+        banner.remove();
+      },
+    }, 'Skip This Version'),
+    el('button', { class: 'update-banner-close', title: 'Dismiss', onclick: () => banner.remove() }, '×')
+  );
+  document.body.append(banner);
+}
+
 function bindMenuEvents() {
   const inChat = () => state.view === 'chat';
   window.tavern.on('menu:newChat', () => inChat() && newChat());
@@ -187,6 +208,7 @@ function bindMenuEvents() {
   window.tavern.on('menu:search', () => inChat() && state.selectedCharacter && openSearch());
   window.tavern.on('menu:history', () => inChat() && openHistory());
   window.tavern.on('menu:regenerate', () => inChat() && regenerateLast());
+  window.tavern.on('updates:available', showUpdateBanner);
 }
 
 async function main() {
@@ -215,6 +237,7 @@ async function main() {
       navigate('settings');
     },
     onModeChange: switchAppMode,
+    showUpdateBanner,
   };
 
   initSidebar(common);

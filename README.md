@@ -9,7 +9,7 @@ OpenChat is built for instant startup, no server, no browser tabs, all data on y
 - **Two app modes** — **Chat** (the default) is a straightforward AI assistant with conversation history, file uploads, and image responses. **Story** unlocks role-playing with character cards, personas, world lore, swipes, and story tools. Switch anytime in Settings → General.
 - **Bring your own key — or none** — designed primarily around **OpenRouter** (one key, hundreds of models, live searchable model list), with OpenAI, Anthropic Claude, Google Gemini, and local **Ollama** (no key, runs on your machine) also supported.
 - **Attachments & images** — attach images and text files to messages (multimodal models see the images; text files are inlined), and image-capable models can reply with images that are saved locally.
-- **Local-first** — characters, chats, settings, and API keys never leave your machine except as requests to your chosen AI provider.
+- **Local-first** — characters, chats, settings, and API keys never leave your machine except as requests to your chosen AI provider. The only other network call is an optional once-a-day version check against GitHub Releases (Settings → General).
 - **Compatible formats** — TavernCardV2 character cards (PNG/JSON), SillyTavern-style JSONL chats, world info books, and presets. One-click import of an existing data folder.
 - **Two user modes** — Regular mode keeps the UI clean and simple; Advanced mode unlocks deep customization of AI responses (see below).
 
@@ -43,6 +43,7 @@ Chat mode keeps the sidebar as a simple conversation list (rename, export, delet
 - **Chat history** — every conversation auto-saves per character; switch, export, or delete past chats from the history picker
 - **Unified search** — search the current conversation or all chats from one dialog; results jump straight to the matching message
 - **Tavern-flavored markdown** — `"dialogue"`, `*actions*`, and narrative text each get their own color; headers, bold, code blocks, blockquotes, lists, and rules are supported, with all input HTML-escaped
+- **Update notifications** — a daily check against GitHub Releases shows a banner when a new version is out (toggle or run manually in Settings → General; no data about you is sent)
 
 ### Characters & World Building
 - **TavernCardV2 import/export** — PNG cards with embedded data (`chara` / `ccv3` tEXt chunks) and JSON cards; drag-and-drop files onto the sidebar to import

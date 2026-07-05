@@ -376,6 +376,44 @@ function renderGeneral() {
     })
   );
 
+  root.append(
+    checkboxRow('Check for updates automatically', {
+      get: () => s.updateCheck !== false,
+      set: (v) => {
+        s.updateCheck = v;
+        scheduleSettingsSave();
+      },
+      hint: 'Checks GitHub Releases once a day for a newer version. Only the version number is fetched — nothing about you or your chats is sent.',
+    })
+  );
+  const updateBtn = el('button', { class: 'btn' }, 'Check Now');
+  const updateStatus = el('span', { class: 'hint', style: { marginLeft: '10px' } });
+  window.tavern.misc.appVersion().then((v) => {
+    updateStatus.textContent = `Current version: ${v}`;
+  });
+  updateBtn.addEventListener('click', async () => {
+    updateBtn.disabled = true;
+    updateStatus.textContent = 'Checking…';
+    try {
+      const update = await window.tavern.updates.check();
+      if (update) {
+        updateStatus.textContent = `Version ${update.version} is available.`;
+        cb.showUpdateBanner?.(update);
+      } else {
+        updateStatus.textContent = 'You are on the latest version.';
+      }
+    } catch (err) {
+      updateStatus.textContent = `Check failed: ${err.message}`;
+    }
+    updateBtn.disabled = false;
+  });
+  root.append(
+    el('div', { class: 'form-row' },
+      el('label', {}, 'Updates'),
+      el('div', { class: 'form-inline' }, updateBtn, updateStatus)
+    )
+  );
+
   if (isChatMode()) {
     root.append(
       textareaRow('Assistant System Prompt', {
@@ -797,7 +835,7 @@ function renderData() {
   const root = el('section', {}, el('h2', {}, 'Data'));
   const dirHint = el('p', { class: 'hint', style: { marginBottom: '16px' } }, 'Loading data location…');
   window.tavern.misc.dataDir().then((dir) => {
-    dirHint.textContent = `All data is stored locally in ${dir} — nothing is sent anywhere except your chosen AI provider.`;
+    dirHint.textContent = `All data is stored locally in ${dir} — nothing is sent anywhere except your chosen AI provider (plus an optional daily version check against GitHub Releases).`;
   });
 
   root.append(

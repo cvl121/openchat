@@ -1,8 +1,9 @@
 import { app, BrowserWindow, protocol, net, Menu, shell, safeStorage } from 'electron';
 import path from 'node:path';
 import url from 'node:url';
-import { initStorage, resolveDataPath } from './storage.js';
+import { initStorage, resolveDataPath, loadSettings } from './storage.js';
 import { registerIPC } from './ipc.js';
+import { checkForUpdate } from './updates.js';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 
@@ -84,6 +85,27 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+// Daily update check against GitHub Releases; pushes `updates:available`
+// to the window. Silent on failure (offline, rate-limited) — the user can
+// always check manually from Settings → General.
+function startUpdateChecks() {
+  const run = async () => {
+    try {
+      const settings = loadSettings();
+      if (settings.updateCheck === false) return;
+      const update = await checkForUpdate({
+        currentVersion: app.getVersion(),
+        skippedVersion: settings.skippedUpdateVersion,
+      });
+      if (update) BrowserWindow.getAllWindows()[0]?.webContents.send('updates:available', update);
+    } catch {
+      /* retry at the next interval */
+    }
+  };
+  setTimeout(run, 10_000);
+  setInterval(run, 24 * 60 * 60 * 1000);
+}
+
 app.whenReady().then(() => {
   // Encrypt API keys at rest with the OS keychain where available
   // (falls back to plaintext on e.g. Linux without a secret service)
@@ -112,6 +134,7 @@ app.whenReady().then(() => {
   });
 
   createWindow();
+  startUpdateChecks();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

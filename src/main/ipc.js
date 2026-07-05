@@ -6,6 +6,7 @@ import { app, ipcMain, dialog, BrowserWindow, shell } from 'electron';
 import path from 'node:path';
 import * as storage from './storage.js';
 import * as llm from './llm.js';
+import { checkForUpdate } from './updates.js';
 
 const activeRequests = new Map(); // requestId -> AbortController
 
@@ -221,4 +222,9 @@ export function registerIPC() {
   }));
   ipcMain.handle('misc:dataDir', wrap(() => storage.dataDir()));
   ipcMain.handle('misc:importDataFolder', wrap((dir) => storage.importDataFolder(dir)));
+  ipcMain.handle('misc:appVersion', wrap(() => app.getVersion()));
+
+  // Manual update check (Settings → General). Deliberately ignores the
+  // skipped version — an explicit check should always report what's newest.
+  ipcMain.handle('updates:check', wrap(() => checkForUpdate({ currentVersion: app.getVersion() })));
 }

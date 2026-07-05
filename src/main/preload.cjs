@@ -7,7 +7,7 @@ async function invoke(channel, ...args) {
   return result?.data ?? result;
 }
 
-const PUSH_CHANNELS = ['llm:chunk', 'llm:done', 'llm:error', 'llm:image', 'menu:newChat', 'menu:newCharacter', 'menu:settings', 'menu:search', 'menu:history', 'menu:regenerate'];
+const PUSH_CHANNELS = ['llm:chunk', 'llm:done', 'llm:error', 'llm:image', 'menu:newChat', 'menu:newCharacter', 'menu:settings', 'menu:search', 'menu:history', 'menu:regenerate', 'updates:available'];
 
 contextBridge.exposeInMainWorld('tavern', {
   settings: {
@@ -75,6 +75,10 @@ contextBridge.exposeInMainWorld('tavern', {
     openExternal: (u) => invoke('misc:openExternal', u),
     dataDir: () => invoke('misc:dataDir'),
     importDataFolder: (dir) => invoke('misc:importDataFolder', dir),
+    appVersion: () => invoke('misc:appVersion'),
+  },
+  updates: {
+    check: () => invoke('updates:check'),
   },
   on: (channel, callback) => {
     if (!PUSH_CHANNELS.includes(channel)) throw new Error(`Unknown channel: ${channel}`);
