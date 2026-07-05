@@ -1,0 +1,65 @@
+{
+  "name": "openchat",
+  "productName": "OpenChat",
+  "version": "1.0.0",
+  "description": "AI character chat for desktop — a fast, native-feeling Electron app inspired by SillyTavern",
+  "author": "OpenChat",
+  "type": "module",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test tests/*.test.js",
+    "dist": "electron-builder --mac",
+    "dist:all": "electron-builder --mac --win --linux"
+  },
+  "license": "GPL-3.0-only",
+  "devDependencies": {
+    "electron": "^37.0.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "com.openchat.app",
+    "productName": "OpenChat",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.entertainment",
+      "icon": "build/icon.icns",
+      "identity": null,
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": false,
+      "target": [
+        { "target": "dmg" },
+        { "target": "zip" }
+      ]
+    },
+    "dmg": {
+      "title": "OpenChat",
+      "contents": [
+        { "x": 130, "y": 180 },
+        { "x": 410, "y": 180, "type": "link", "path": "/Applications" }
+      ]
+    },
+    "win": {
+      "target": ["nsis", "zip"],
+      "icon": "build/icon.icns"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Game"
+    }
+  }
+}
