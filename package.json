@@ -31,12 +31,11 @@
     "mac": {
       "category": "public.app-category.entertainment",
       "icon": "build/icon.icns",
-      "identity": null,
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-      "notarize": false,
+      "notarize": true,
       "target": [
         { "target": "dmg" },
         { "target": "zip" }
