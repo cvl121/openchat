@@ -1,5 +1,5 @@
 // Tavern-flavored markdown renderer:
-// "quoted text" gets the dialogue color, *italic* gets the action color,
+// "quoted text" (also 「…」/『…』/“…”) gets the dialogue color, *italic* gets the action color,
 // *"quoted in asterisks"* gets italic + dialogue color, narrative text uses
 // the base color. Plus headers, bold, code, blockquotes, lists, and rules.
 //
@@ -22,6 +22,8 @@ function renderInline(text) {
   out = out.replace(/\*([^*\n]+)\*/g, "<em class='md-action'>$1</em>");
   // Plain quoted text = dialogue (single-quoted attrs so this regex can't match them)
   out = out.replace(/"([^"\n]*[^"\s][^"\n]*)"/g, '<span class=\'md-quote\'>"$1"</span>');
+  // CJK dialogue quoting: 「…」/『…』 (Japanese) and “…” (Chinese/curly)
+  out = out.replace(/「[^」\n]+」|『[^』\n]+』|“[^”\n]+”/g, "<span class='md-quote'>$&</span>");
 
   out = out.replace(/\x00(\d+)\x00/g, (_m, i) => `<code>${codeSpans[+i]}</code>`);
   return out;

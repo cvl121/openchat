@@ -33,16 +33,16 @@ Chat mode keeps the sidebar as a simple conversation list (rename, export, delet
 ### Chat
 - **Streaming responses** rendered live as tokens arrive, with a Stop button / Escape key
 - **File uploads** — attach images and text files via the 📎 button, paste, or drag-and-drop; images go to multimodal models as image parts, text files are inlined into the prompt
-- **Image generation** — enable in Settings → API to get a 🎨 button that sends your prompt to a dedicated image provider/model (separate from your chat model); generated images render in the chat and can be saved to Downloads or any folder
+- **Image generation** — enable in Settings → API to get a 🎨 button that sends your prompt to a dedicated image provider/model (separate from your chat model); generated images render in the chat and can be saved to Downloads or any folder. Asking the chat model for an image in a plain message also works: if the chat model can't produce one, the request is automatically re-routed to your image model
 - **Chat compression** — long chats are summarized in the background (threshold configurable) so each new reply stops resending the full history; Advanced mode can customize the summarization prompt
-- **Token counters** — live token estimate for your draft, plus a per-conversation counter (with compressed-message count) in the toolbar
+- **Token counters** — live token estimate for your draft, plus a per-conversation counter (with compressed-message count) in the toolbar; estimates are script-aware (CJK text is counted at ~1 token per character) so context trimming works correctly for Japanese, Chinese, and Korean chats
 - **Account balance** — OpenRouter users see their remaining credits in Settings → API
 - **Model pickers that know your key** — model lists load automatically once a key is entered (OpenRouter, OpenAI, Anthropic, Gemini, Ollama)
 - **Swipes** — generate alternative responses and page between them; alternate greetings become swipes on the first message
 - **Message editing** — edit, delete, copy, or regenerate any message; undo up to 10 steps with Cmd+Z
 - **Chat history** — every conversation auto-saves per character; switch, export, or delete past chats from the history picker
 - **Unified search** — search the current conversation or all chats from one dialog; results jump straight to the matching message
-- **Tavern-flavored markdown** — `"dialogue"`, `*actions*`, and narrative text each get their own color; headers, bold, code blocks, blockquotes, lists, and rules are supported, with all input HTML-escaped
+- **Tavern-flavored markdown** — `"dialogue"` (including CJK quoting: `「…」`, `『…』`, `“…”`), `*actions*`, and narrative text each get their own color; headers, bold, code blocks, blockquotes, lists, and rules are supported, with all input HTML-escaped
 - **Update notifications** — a daily check against GitHub Releases shows a banner when a new version is out (toggle or run manually in Settings → General; no data about you is sent)
 
 ### Characters & World Building
@@ -100,6 +100,10 @@ All requests run in the Electron main process (no CORS issues) and stream over S
 
 ## Getting Started
 
+**Download**: grab the latest installer from [Releases](https://github.com/cvl121/openchat/releases) — macOS builds (Apple Silicon & Intel, DMG/zip) are signed and notarized; a Windows 10/11 installer is included (unsigned for now, so SmartScreen may ask you to confirm via "More info → Run anyway").
+
+**Or run from source**:
+
 ```bash
 cd openchat
 npm install
@@ -132,13 +136,13 @@ Settings → Data → **Import Data Folder**: select an existing OpenChat data f
 
 ## Data Storage
 
-Everything lives in Electron's user-data directory (macOS: `~/Library/Application Support/OpenChat/`):
+Everything lives in Electron's user-data directory — macOS: `~/Library/Application Support/OpenChat/`, Windows: `%APPDATA%\OpenChat\`, Linux: `~/.config/OpenChat/`:
 
 | Data | Format | Location |
 |------|--------|----------|
 | Characters | PNG with base64 JSON in a `chara` tEXt chunk | `characters/` |
 | Chats | JSONL (line 1 = metadata, then one message per line) | `chats/{CharacterName}/` |
-| Settings & API keys | JSON | `user/settings.json` |
+| Settings & API keys | JSON — keys encrypted at rest via the OS credential store (macOS Keychain, Windows DPAPI, Linux Secret Service/keyring) | `user/settings.json` |
 | World info | JSON | `worlds/` |
 | Personas | JSON + avatar images | `user/personas.json`, `User Avatars/` |
 | Presets | JSON | `presets/` |

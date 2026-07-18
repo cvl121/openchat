@@ -13,6 +13,14 @@ test('quoted text gets dialogue styling', () => {
   assert.match(html, /<span class='md-quote'>"hello there"<\/span>/);
 });
 
+test('CJK quotes get dialogue styling', () => {
+  assert.match(renderMarkdown('彼女は「こんにちは」と言った。'), /<span class='md-quote'>「こんにちは」<\/span>/);
+  assert.match(renderMarkdown('『二重かぎ括弧』も対話。'), /<span class='md-quote'>『二重かぎ括弧』<\/span>/);
+  assert.match(renderMarkdown('她说：“你好。”'), /<span class='md-quote'>“你好。”<\/span>/);
+  // Unpaired brackets stay plain
+  assert.doesNotMatch(renderMarkdown('片方だけ「の括弧'), /md-quote/);
+});
+
 test('single asterisk italic is action text', () => {
   const html = renderMarkdown('*walks to the door*');
   assert.match(html, /<em class='md-action'>walks to the door<\/em>/);

@@ -75,9 +75,21 @@ export function replaceTemplateVars(text, charName, userName) {
     .replace(/<USER>/g, userName);
 }
 
-/** Rough token estimate (chars / 4). */
+// CJK codepoints (Han, kana, Hangul, full-width forms, plane-2 ideographs).
+// These tokenize at roughly one token per character, unlike Latin-ish text at
+// ~4 characters per token — a single chars/4 heuristic underestimates CJK
+// chats ~4x, which matters because this estimate drives context-window
+// trimming in promptBuilder, not just the UI counters.
+const CJK_RE =
+  // Hangul Jamo & syllables, CJK radicals/kana/Han/Yi, compat ideographs & forms,
+  // full-width forms, plane-2 Han
+  /[\u1100-\u11FF\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFFEF\u{20000}-\u{2FA1F}]/gu;
+
+/** Rough token estimate: CJK chars count as 1 token, everything else as 1/4. */
 export function estimateTokens(text) {
-  return Math.ceil((text ?? '').length / 4);
+  const s = text ?? '';
+  const cjk = (s.match(CJK_RE) ?? []).length;
+  return Math.ceil(cjk + (s.length - cjk) / 4);
 }
 
 let toastTimer = null;
