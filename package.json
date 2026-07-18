@@ -1,7 +1,7 @@
 {
   "name": "openchat",
   "productName": "OpenChat",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "AI character chat for desktop — a fast, native-feeling Electron app inspired by SillyTavern",
   "author": "OpenChat",
   "type": "module",
