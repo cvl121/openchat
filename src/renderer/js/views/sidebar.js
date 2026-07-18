@@ -9,6 +9,7 @@ let callbacks = {}; // { selectCharacter, selectConversation, newChat, navigate,
 
 export function initSidebar(cb) {
   callbacks = cb;
+  renderCollapseControls();
   renderSearch();
   renderNav();
   renderSidebar();
@@ -49,6 +50,35 @@ export function initSidebar(cb) {
     document.addEventListener('mousemove', move);
     document.addEventListener('mouseup', up);
   });
+}
+
+// Collapsible sidebar: a « button at the top hides the panel (persisted in
+// settings); a floating ☰ button brings it back.
+function renderCollapseControls() {
+  const sidebar = document.getElementById('sidebar');
+  sidebar.prepend(
+    el(
+      'div',
+      { id: 'sidebar-header' },
+      el('button', { class: 'btn-icon', id: 'sidebar-collapse-btn', title: 'Hide sidebar', onclick: toggleSidebarCollapsed }, '«')
+    )
+  );
+  document.body.append(
+    el('button', { id: 'sidebar-expand-btn', class: 'btn-icon', title: 'Show sidebar', onclick: toggleSidebarCollapsed }, '☰')
+  );
+  applySidebarCollapsed();
+}
+
+function toggleSidebarCollapsed() {
+  state.settings.sidebarCollapsed = !state.settings.sidebarCollapsed;
+  scheduleSettingsSave();
+  applySidebarCollapsed();
+}
+
+function applySidebarCollapsed() {
+  const collapsed = !!state.settings?.sidebarCollapsed;
+  document.getElementById('app').classList.toggle('sidebar-collapsed', collapsed);
+  document.getElementById('sidebar-expand-btn').classList.toggle('visible', collapsed);
 }
 
 let searchQuery = '';

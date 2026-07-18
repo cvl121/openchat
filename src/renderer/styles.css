@@ -131,6 +131,28 @@ input[type='checkbox'] {
   flex-shrink: 0;
 }
 
+#sidebar-header {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 8px 4px;
+}
+#app.sidebar-collapsed #sidebar,
+#app.sidebar-collapsed #sidebar-resizer { display: none; }
+#sidebar-expand-btn {
+  /* Floating re-open control; sits right of the macOS traffic lights and
+     must stay clickable inside the draggable title-bar strip */
+  position: fixed;
+  top: 8px;
+  left: 80px;
+  z-index: 40;
+  display: none;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  -webkit-app-region: no-drag;
+}
+#sidebar-expand-btn.visible { display: block; }
+
 #sidebar-resizer {
   width: 4px;
   cursor: col-resize;
