@@ -250,7 +250,7 @@ export function saveCharacter(card, opts = {}) {
   if (opts.avatarBuffer) avatar = Buffer.from(opts.avatarBuffer);
   else if (opts.avatarPath) avatar = fs.readFileSync(opts.avatarPath);
 
-  let filename = opts.filename;
+  let filename = opts.filename ? sanitizeFilename(opts.filename) : null;
   if (!filename) {
     const base = sanitizeFilename(card.data.name);
     filename = `${base}.png`;
@@ -322,12 +322,12 @@ export function deleteCharacter(filename) {
 }
 
 export function exportCharacter(filename, destPath) {
-  fs.copyFileSync(path.join(charactersDir(), filename), destPath);
+  fs.copyFileSync(path.join(charactersDir(), sanitizeFilename(filename)), destPath);
   return true;
 }
 
 export function exportCharacterJSON(filename, destPath) {
-  const buf = fs.readFileSync(path.join(charactersDir(), filename));
+  const buf = fs.readFileSync(path.join(charactersDir(), sanitizeFilename(filename)));
   const card = parseCharacterCard(buf);
   fs.writeFileSync(destPath, JSON.stringify(card, null, 2));
   return true;
@@ -392,7 +392,7 @@ export function createChat(characterName, userName) {
 }
 
 export function loadChat(characterName, file) {
-  const full = path.join(chatsDirFor(characterName), file);
+  const full = path.join(chatsDirFor(characterName), sanitizeFilename(file));
   const lines = fs
     .readFileSync(full, 'utf8')
     .split('\n')
@@ -408,19 +408,19 @@ export function loadChat(characterName, file) {
 }
 
 export function appendMessage(characterName, file, message) {
-  fs.appendFileSync(path.join(chatsDirFor(characterName), file), JSON.stringify(message) + '\n');
+  fs.appendFileSync(path.join(chatsDirFor(characterName), sanitizeFilename(file)), JSON.stringify(message) + '\n');
   return true;
 }
 
 /** Rewrite the whole chat file (used after edits, swipes, deletions). */
 export function rewriteChat(characterName, file, metadata, messages) {
   const lines = [JSON.stringify(metadata), ...messages.map((m) => JSON.stringify(m))];
-  writeFileAtomic(path.join(chatsDirFor(characterName), file), lines.join('\n') + '\n');
+  writeFileAtomic(path.join(chatsDirFor(characterName), sanitizeFilename(file)), lines.join('\n') + '\n');
   return true;
 }
 
 export function deleteChat(characterName, file) {
-  const full = path.join(chatsDirFor(characterName), file);
+  const full = path.join(chatsDirFor(characterName), sanitizeFilename(file));
   if (fs.existsSync(full)) fs.unlinkSync(full);
   return true;
 }
@@ -551,7 +551,7 @@ export function listWorldInfo() {
 }
 
 export function saveWorldInfo(book) {
-  const file = book.file ?? `${sanitizeFilename(book.name)}.json`;
+  const file = book.file ? sanitizeFilename(book.file) : `${sanitizeFilename(book.name)}.json`;
   writeFileAtomic(path.join(worldsDir(), file), JSON.stringify({ ...book, file }, null, 2));
   return { ...book, file };
 }

@@ -24,6 +24,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
@@ -31,6 +32,8 @@ function createWindow() {
     if (/^https?:\/\//.test(target)) shell.openExternal(target);
     return { action: 'deny' };
   });
+  // The window only ever shows the local app page; block any navigation away from it
+  win.webContents.on('will-navigate', (event) => event.preventDefault());
   return win;
 }
 
