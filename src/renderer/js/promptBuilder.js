@@ -5,6 +5,7 @@
 //   reminder prompt → post-history instructions
 
 import { replaceTemplateVars, estimateTokens } from './util.js';
+import { isImagePlaceholder } from './imageFlow.js';
 
 function keywordMatches(entry, recentText) {
   const caseSensitive = entry.case_sensitive ?? false;
@@ -123,6 +124,10 @@ export function buildMessages({
       else if (a.kind === 'text' && a.text != null) content += `\n\n[Attached file: ${a.name}]\n${a.text}`;
       else content += `\n\n[Attached file: ${a.name}]`;
     }
+    // A bare "<image>" with no actual image is a failed image turn (a model
+    // placeholder token). Resending it teaches the next model to answer the
+    // same way — drop it from the prompt.
+    if (!images.length && isImagePlaceholder(content)) continue;
     if (content || images.length) {
       history.push({
         role: message.is_user ? 'user' : 'assistant',

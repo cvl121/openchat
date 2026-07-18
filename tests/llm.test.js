@@ -21,6 +21,14 @@ function startMockServer() {
         }
         if (json.stream) {
           res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+          if (json.model === 'image-model') {
+            // OpenRouter image-capable models: image arrives on the delta
+            const delta = { content: '', images: [{ image_url: { url: 'data:image/png;base64,AAAA' } }] };
+            res.write(`data: ${JSON.stringify({ choices: [{ delta, finish_reason: 'stop' }] })}\n\n`);
+            res.write('data: [DONE]\n\n');
+            res.end();
+            return;
+          }
           const chunks = ['Hello', ' from', ' the', ' tavern!'];
           for (const text of chunks) {
             res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`);
@@ -95,6 +103,57 @@ test('non-streaming mode returns complete text', async () => {
     const full = await sendMessage([{ role: 'user', content: 'hi' }], cfg, null);
     assert.equal(full, 'Hello complete');
     assert.equal(server.lastRequest.body.stream, false);
+  } finally {
+    server.close();
+  }
+});
+
+test('image requests add modalities and deliver images via onImage', async () => {
+  const server = await startMockServer();
+  try {
+    const images = [];
+    let finish = null;
+    const full = await sendMessage(
+      [{ role: 'user', content: 'draw an apple' }],
+      config(server, { model: 'image-model', requestImages: true }),
+      () => {},
+      { onImage: (url) => images.push(url), onFinishReason: (r) => (finish = r) }
+    );
+    assert.deepEqual(server.lastRequest.body.modalities, ['image', 'text']);
+    assert.deepEqual(images, ['data:image/png;base64,AAAA']);
+    assert.equal(full, '');
+    assert.equal(finish, 'stop');
+  } finally {
+    server.close();
+  }
+});
+
+test('modalities omitted unless image output is requested', async () => {
+  const server = await startMockServer();
+  try {
+    await sendMessage([{ role: 'user', content: 'hi' }], config(server), null);
+    assert.equal(server.lastRequest.body.modalities, undefined);
+  } finally {
+    server.close();
+  }
+});
+
+test('generated images in history become image_url parts on assistant turns', async () => {
+  const server = await startMockServer();
+  try {
+    const png = 'data:image/png;base64,BBBB';
+    await sendMessage(
+      [
+        { role: 'user', content: 'draw an apple' },
+        { role: 'assistant', content: '', images: [png] },
+        { role: 'user', content: 'now a pear' },
+      ],
+      config(server),
+      null
+    );
+    const assistantTurn = server.lastRequest.body.messages[1];
+    assert.equal(assistantTurn.role, 'assistant');
+    assert.deepEqual(assistantTurn.content, [{ type: 'image_url', image_url: { url: png } }]);
   } finally {
     server.close();
   }

@@ -329,9 +329,21 @@ function renderImageGen(s) {
   });
   const datalist = el('datalist', { id: 'image-model-list' });
   const hint = el('div', { class: 'hint' }, 'Only models that can output images are listed.');
+  // A typo here (e.g. "gemini-3.1-image" instead of "google/gemini-3.1-flash-image")
+  // only surfaces as a provider error mid-chat — warn right where it can be fixed.
+  let imageModelIds = null; // known image-capable IDs once the provider list loads
+  let baseHint = hint.textContent;
+  const refreshHint = () => {
+    const value = (s.imageGen.model ?? '').trim();
+    hint.textContent =
+      imageModelIds?.length && value && !imageModelIds.includes(value)
+        ? `⚠ “${value}” is not an image-capable ${PROVIDERS[imageProvider].label} model — pick one from the list (e.g. ${imageModelIds[0]}).`
+        : baseHint;
+  };
   modelInput.addEventListener('input', () => {
     s.imageGen.model = modelInput.value.trim();
     scheduleSettingsSave();
+    refreshHint();
   });
   if (!PROVIDERS[imageProvider].requiresKey || s.apiKeys[imageProvider]) {
     fetchModels({
@@ -342,9 +354,11 @@ function renderImageGen(s) {
       .then((models) => {
         const imageModels = models.filter((m) => m.imageOutput);
         fillModelDatalist(datalist, imageModels.length ? imageModels : models);
-        hint.textContent = imageModels.length
+        imageModelIds = imageModels.map((m) => m.id);
+        baseHint = imageModels.length
           ? `${imageModels.length} image-capable models — type to search.`
           : 'Provider did not flag image-output models; full list shown.';
+        refreshHint();
       })
       .catch(() => {});
   }

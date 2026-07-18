@@ -24,6 +24,7 @@ import {
 } from '../state.js';
 import { estimateTokens } from '../util.js';
 import { avatar, streamingDots } from '../components.js';
+import { imageFollowupAction, decorateModelError, IMAGE_HINT_MESSAGE } from '../imageFlow.js';
 
 const ASSISTANT_NAME = ASSISTANT_CHARACTER.card.data.name;
 
@@ -35,6 +36,8 @@ let lastFinishReason = null; // provider stop reason for the last response
 // Stop reasons that mean "truncated by the max-tokens limit" per provider
 const LENGTH_REASONS = new Set(['length', 'max_tokens', 'MAX_TOKENS']);
 const newMessages = new WeakSet(); // messages not yet on disk → append instead of rewrite
+const reroutedMessages = new WeakSet(); // placeholder responses already re-routed to the image model — never loop
+let lastConfigOverride = null; // config of the in-flight/last turn (🎨 image turns) so Retry re-runs the same way
 let pendingAttachments = []; // uploads staged in the input bar, sent with the next message
 const resolvedUploads = new Map(); // upload file -> {kind, dataURL?|text?} for prompt building
 
@@ -68,12 +71,38 @@ export function initChat(callbacks) {
     if (LENGTH_REASONS.has(lastFinishReason)) {
       devLog('INFO', `response truncated by max-tokens limit (finish_reason: ${lastFinishReason})`);
     }
+    // Image-capable chat models asked for an image in a text-only request
+    // answer with a bare "<image>" placeholder instead of text. Strip the
+    // token when a real image also arrived; otherwise re-run the turn against
+    // the configured image model so the user gets what they asked for.
+    const msg = streamingMessage();
+    const action = imageFollowupAction(msg?.mes, {
+      hasImages: !!msg?.extra?.attachments?.length,
+      imageGenEnabled: !!state.settings.imageGen?.enabled,
+      alreadyRerouted: msg ? reroutedMessages.has(msg) : false,
+    });
+    if (action !== 'none') devLog('INFO', `image placeholder response ("${msg.mes.trim()}") → ${action}`);
+    if (action === 'strip') {
+      msg.mes = '';
+      if (msg.swipes) msg.swipes[msg.swipe_id ?? 0] = '';
+    } else if (action === 'reroute') {
+      reroutedMessages.add(msg);
+      msg.mes = '';
+      if (msg.swipes) msg.swipes[msg.swipe_id ?? 0] = '';
+      const idx = state.currentChat.messages.indexOf(msg);
+      state.generating = false;
+      state.activeRequestId = null;
+      await generateResponse({ historyUpTo: idx, intoMessage: msg, configOverride: imageApiConfig() });
+      return;
+    } else if (action === 'hint') {
+      lastError = IMAGE_HINT_MESSAGE;
+    }
     await finishGeneration();
   });
   window.tavern.on('llm:error', async ({ requestId, error, aborted }) => {
     if (requestId !== state.activeRequestId) return;
     devLog('ERR', error);
-    if (!aborted) lastError = error;
+    if (!aborted) lastError = decorateModelError(error, { imageTurn: !!lastConfigOverride });
     await finishGeneration({ failed: !aborted });
   });
   // Image outputs from image-capable models: persist to uploads/ and attach
@@ -852,6 +881,7 @@ async function generateResponse({ historyUpTo = null, intoMessage = null, config
   const character = state.selectedCharacter;
   const chat = state.currentChat;
   const config = configOverride ?? apiConfig();
+  lastConfigOverride = configOverride;
   lastError = null;
   lastFinishReason = null;
 
@@ -902,7 +932,7 @@ async function generateResponse({ historyUpTo = null, intoMessage = null, config
     devLog('RES', `completed · ${msg.mes.length} chars`);
   } catch (err) {
     devLog('ERR', err.message);
-    lastError = err.message;
+    lastError = decorateModelError(err.message, { imageTurn: !!configOverride });
     await finishGeneration({ failed: true });
   }
 }
@@ -916,8 +946,10 @@ export function stopGeneration() {
 async function retryLast() {
   if (state.generating) return;
   lastError = null;
+  // A failed 🎨 turn retries against the image model, not the chat model
+  const configOverride = lastConfigOverride ?? undefined;
   const messages = state.currentChat?.messages ?? [];
-  if (messages.at(-1)?.is_user) await generateResponse();
+  if (messages.at(-1)?.is_user) await generateResponse({ configOverride });
   else await regenerateLast();
 }
 

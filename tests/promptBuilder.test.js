@@ -34,6 +34,33 @@ test('buildMessages assembles system prompt with card fields', () => {
   assert.deepEqual(messages.at(-1), { role: 'system', content: 'Stay in character.' });
 });
 
+test('failed image turns (bare "<image>" placeholders) are dropped from the prompt', () => {
+  const messages = buildMessages({
+    character,
+    chatHistory: [
+      { is_user: true, mes: 'Generate an image of a city' },
+      { is_user: false, mes: '<image>' }, // failed image turn persisted in an old chat
+      { is_user: true, mes: 'Try again please' },
+    ],
+    userName: 'Bob',
+  });
+  assert.ok(!messages.some((m) => m.content === '<image>'));
+  // The surrounding turns survive
+  assert.ok(messages.some((m) => m.content === 'Generate an image of a city'));
+  assert.ok(messages.some((m) => m.content === 'Try again please'));
+  // A placeholder WITH a real image is a successful image turn and is kept
+  const withImage = buildMessages({
+    character,
+    chatHistory: [
+      { is_user: true, mes: 'Generate an image of a city' },
+      { is_user: false, mes: '<image>', _attachments: [{ kind: 'image', dataURL: 'data:image/png;base64,AAAA' }] },
+    ],
+    userName: 'Bob',
+  });
+  const imageTurn = withImage.find((m) => m.images);
+  assert.deepEqual(imageTurn.images, ['data:image/png;base64,AAAA']);
+});
+
 test('world info: constant always included, keyword entries only when triggered', () => {
   const worldInfoEntries = [
     { keys: ['dragon'], content: 'Dragons are red.', constant: false, enabled: true },
