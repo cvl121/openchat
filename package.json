@@ -14,8 +14,8 @@
   },
   "license": "GPL-3.0-only",
   "devDependencies": {
-    "electron": "^37.0.0",
-    "electron-builder": "^26.0.0"
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.3"
   },
   "build": {
     "appId": "com.openchat.app",
@@ -37,19 +37,34 @@
       "entitlementsInherit": "build/entitlements.mac.plist",
       "notarize": true,
       "target": [
-        { "target": "dmg" },
-        { "target": "zip" }
+        {
+          "target": "dmg"
+        },
+        {
+          "target": "zip"
+        }
       ]
     },
     "dmg": {
       "title": "OpenChat",
       "contents": [
-        { "x": 130, "y": 180 },
-        { "x": 410, "y": 180, "type": "link", "path": "/Applications" }
+        {
+          "x": 130,
+          "y": 180
+        },
+        {
+          "x": 410,
+          "y": 180,
+          "type": "link",
+          "path": "/Applications"
+        }
       ]
     },
     "win": {
-      "target": ["nsis", "zip"],
+      "target": [
+        "nsis",
+        "zip"
+      ],
       "icon": "build/icon.icns"
     },
     "nsis": {
@@ -57,7 +72,10 @@
       "allowToChangeInstallationDirectory": true
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "category": "Game"
     }
   }
