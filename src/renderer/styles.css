@@ -313,6 +313,10 @@ input[type='checkbox'] {
   max-width: 880px;
   width: 100%;
   margin: 0 auto;
+  /* Messages must never be squeezed by the flex column — the container
+     scrolls instead. Without this, content-visibility's size containment
+     lets messages collapse when the window is short. */
+  flex-shrink: 0;
   /* Skip layout/paint for offscreen messages — keeps long chats smooth */
   content-visibility: auto;
   contain-intrinsic-size: auto 90px;
@@ -655,6 +659,11 @@ input[type='checkbox'] {
 }
 .chip-remove:hover { color: var(--danger); }
 .attach-btn { font-size: 16px; align-self: flex-end; margin-bottom: 4px; }
+.img-toggle.active {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  outline: 1.5px solid var(--accent);
+  border-radius: 8px;
+}
 
 .msg-attachments {
   display: flex;

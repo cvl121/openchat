@@ -30,6 +30,13 @@ const ASSISTANT_NAME = ASSISTANT_CHARACTER.card.data.name;
 
 let cb = {}; // { renderSidebar, navigate, editCharacter }
 let streamingMsgEl = null; // content element receiving chunks
+// Whether the view is anchored to the newest message. Distinct from a "near
+// bottom" proximity check: an attachment image finishing its async load can
+// grow a message by hundreds of pixels, leaving the viewport far from the
+// bottom even though the user never scrolled away — intent has to be tracked,
+// not inferred from distance. Cleared only by the user scrolling up.
+let followingBottom = true;
+let messagesResizeObserver = null; // re-anchors on message growth while following
 let lastError = null;
 let lastTrimmed = 0; // messages dropped from the last prompt to fit the context window
 let lastFinishReason = null; // provider stop reason for the last response
@@ -38,6 +45,7 @@ const LENGTH_REASONS = new Set(['length', 'max_tokens', 'MAX_TOKENS']);
 const newMessages = new WeakSet(); // messages not yet on disk → append instead of rewrite
 const reroutedMessages = new WeakSet(); // placeholder responses already re-routed to the image model — never loop
 let lastConfigOverride = null; // config of the in-flight/last turn (🎨 image turns) so Retry re-runs the same way
+let imageMode = false; // 🎨 toggle: while on, Send routes prompts to the image model
 let pendingAttachments = []; // uploads staged in the input bar, sent with the next message
 const resolvedUploads = new Map(); // upload file -> {kind, dataURL?|text?} for prompt building
 
@@ -486,14 +494,23 @@ export function renderChat({ scrollBottom = false } = {}) {
   );
   root.append(scrollBtn);
   messagesEl.addEventListener('scroll', () => {
-    const away = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight > 300;
-    scrollBtn.classList.toggle('visible', away);
+    const distance = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
+    scrollBtn.classList.toggle('visible', distance > 300);
+    followingBottom = distance < 160;
   });
+  // While following the newest message, any growth in a message re-anchors
+  // the view: streamed text, attachment images finishing their async load,
+  // and content-visibility re-estimating offscreen sizes all land here.
+  messagesResizeObserver?.disconnect();
+  messagesResizeObserver = new ResizeObserver(() => {
+    if (followingBottom) scrollToBottom(true);
+  });
+  for (const child of messagesEl.children) messagesResizeObserver.observe(child, { box: 'border-box' });
 
   // Input bar — auto-grows with content up to a max height
   const input = el('textarea', {
     id: 'chat-input',
-    placeholder: `Message ${data.name}…`,
+    placeholder: imageMode ? 'Describe an image to generate…' : `Message ${data.name}…`,
     rows: 1,
   });
   const autoGrow = () => {
@@ -561,13 +578,19 @@ export function renderChat({ scrollBottom = false } = {}) {
     '📎'
   );
   const imageGen = state.settings.imageGen ?? {};
+  if (!imageGen.enabled) imageMode = false;
   const imageBtn = imageGen.enabled
     ? el(
         'button',
         {
-          class: 'btn-icon attach-btn',
-          title: `Generate an image from this prompt (${imageApiConfig().model})`,
-          onclick: () => sendMessage({ asImage: true }),
+          class: `btn-icon attach-btn img-toggle${imageMode ? ' active' : ''}`,
+          title: imageMode
+            ? `Image mode — messages generate images with ${imageApiConfig().model}. Click to switch back to the chat model.`
+            : `Switch to image mode (${imageApiConfig().model})`,
+          onclick: () => {
+            imageMode = !imageMode;
+            renderChat();
+          },
         },
         '🎨'
       )
@@ -620,8 +643,22 @@ export function renderChat({ scrollBottom = false } = {}) {
   updateDraftTokens();
   // Restore scroll unless explicitly jumping (chat switch) or the user was
   // already following the bottom.
-  if (scrollBottom || !prevScroll || prevScroll.nearBottom) scrollToBottom(true);
-  else messagesEl.scrollTop = prevScroll.top;
+  console.log(`[DBG] render sb=${scrollBottom} prev=${JSON.stringify(prevScroll)} following=${followingBottom}`); // TEMP-DEBUG
+  if (scrollBottom || !prevScroll || prevScroll.nearBottom || followingBottom) {
+    scrollToBottom(true);
+    // Right after a rebuild, layout keeps settling for a few frames (image
+    // decode, content-visibility estimates). Hold the anchor while it does;
+    // a user scrolling away flips followingBottom and stops the pinning.
+    const settle = (frames) => {
+      if (frames <= 0 || !followingBottom) return;
+      scrollToBottom(true);
+      requestAnimationFrame(() => settle(frames - 1));
+    };
+    requestAnimationFrame(() => settle(12));
+  } else {
+    messagesEl.scrollTop = prevScroll.top;
+    followingBottom = false;
+  }
   if (!state.generating) {
     input.focus();
     if (draft?.value) {
@@ -678,6 +715,9 @@ function attachmentStrip(msg) {
               alt: a.name,
               title: `${a.name} — click to view`,
               onclick: () => openImageViewer(a),
+              // Images load after the scroll position is set and grow the
+              // message under the viewport — re-anchor unless the user
+              // deliberately scrolled away.
             }),
             el('button', {
               class: 'btn-icon img-save-btn',
@@ -766,7 +806,10 @@ function scrollToBottom(force) {
   const elMessages = document.getElementById('messages');
   if (!elMessages) return;
   const nearBottom = elMessages.scrollHeight - elMessages.scrollTop - elMessages.clientHeight < 160;
-  if (force || nearBottom) elMessages.scrollTop = elMessages.scrollHeight;
+  if (force || nearBottom) {
+    elMessages.scrollTop = elMessages.scrollHeight;
+    followingBottom = true;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -841,11 +884,13 @@ async function resolveAttachments(messages) {
 
 export async function sendMessage({ asImage = false } = {}) {
   if (state.generating || !state.selectedCharacter || !state.currentChat) return;
+  // Explicit request or the 🎨 toggle — either routes this turn to the image model
+  const useImage = (asImage || imageMode) && !!state.settings.imageGen?.enabled;
   const input = document.getElementById('chat-input');
   const text = input?.value.trim() ?? '';
   const attachments = pendingAttachments;
   const lastIsUser = state.currentChat.messages.at(-1)?.is_user;
-  if (asImage && !text && !attachments.length) {
+  if (useImage && !text && !attachments.length) {
     toast('Describe the image you want to generate', 'error');
     return;
   }
@@ -874,7 +919,7 @@ export async function sendMessage({ asImage = false } = {}) {
     if (input) input.value = '';
   }
   // 🎨 routes this turn to the dedicated image provider/model
-  await generateResponse(asImage ? { configOverride: imageApiConfig() } : {});
+  await generateResponse(useImage ? { configOverride: imageApiConfig() } : {});
 }
 
 async function generateResponse({ historyUpTo = null, intoMessage = null, configOverride = null } = {}) {
@@ -925,7 +970,9 @@ async function generateResponse({ historyUpTo = null, intoMessage = null, config
   state.generating = true;
   state.activeRequestId = uuid();
   devLog('REQ', `${config.provider}/${config.model} · ${prompt.length} messages · ~${stats.promptTokens} tokens${lastTrimmed ? ` · ${lastTrimmed} trimmed` : ''} · ${JSON.stringify(prompt.at(-1))?.slice(0, 300)}`);
-  renderChat({ scrollBottom: true });
+  // A fresh send jumps to the new message; continuations (regenerate,
+  // continue, image reroute) keep whatever position the user is at.
+  renderChat({ scrollBottom: !intoMessage });
 
   try {
     await window.tavern.llm.send(state.activeRequestId, prompt, config);
