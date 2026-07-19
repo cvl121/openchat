@@ -52,24 +52,19 @@ export function initSidebar(cb) {
   });
 }
 
-// Collapsible sidebar: a « button at the top hides the panel (persisted in
-// settings); a floating ☰ button brings it back.
+// Collapsible sidebar: a single toggle that stays put in the top-left while
+// the panel slides in and out beneath it (persisted in settings).
+const SHORTCUT_HINT = navigator.platform.includes('Mac') ? '⌘\\' : 'Ctrl+\\';
+
 function renderCollapseControls() {
-  const sidebar = document.getElementById('sidebar');
-  sidebar.prepend(
-    el(
-      'div',
-      { id: 'sidebar-header' },
-      el('button', { class: 'btn-icon', id: 'sidebar-collapse-btn', title: 'Hide sidebar', onclick: toggleSidebarCollapsed }, '«')
-    )
-  );
-  document.body.append(
-    el('button', { id: 'sidebar-expand-btn', class: 'btn-icon', title: 'Show sidebar', onclick: toggleSidebarCollapsed }, '☰')
-  );
+  const btn = el('button', { id: 'sidebar-toggle', class: 'btn-icon', onclick: toggleSidebar });
+  btn.innerHTML =
+    '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/></svg>';
+  document.body.append(btn);
   applySidebarCollapsed();
 }
 
-function toggleSidebarCollapsed() {
+export function toggleSidebar() {
   state.settings.sidebarCollapsed = !state.settings.sidebarCollapsed;
   scheduleSettingsSave();
   applySidebarCollapsed();
@@ -78,7 +73,11 @@ function toggleSidebarCollapsed() {
 function applySidebarCollapsed() {
   const collapsed = !!state.settings?.sidebarCollapsed;
   document.getElementById('app').classList.toggle('sidebar-collapsed', collapsed);
-  document.getElementById('sidebar-expand-btn').classList.toggle('visible', collapsed);
+  const btn = document.getElementById('sidebar-toggle');
+  const label = `${collapsed ? 'Show' : 'Hide'} sidebar (${SHORTCUT_HINT})`;
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
+  btn.setAttribute('aria-expanded', String(!collapsed));
 }
 
 let searchQuery = '';

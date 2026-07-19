@@ -129,29 +129,34 @@ input[type='checkbox'] {
   flex-direction: column;
   padding-top: 42px;
   flex-shrink: 0;
+  transition: margin-left 0.22s ease;
+}
+/* Slide out under the window edge instead of vanishing; the panel keeps its
+   width so its content doesn't reflow mid-animation */
+#app.sidebar-collapsed #sidebar {
+  margin-left: calc(-1 * var(--sidebar-width) - 1px);
+}
+#app.sidebar-collapsed #sidebar-resizer {
+  pointer-events: none;
+  opacity: 0;
 }
 
-#sidebar-header {
-  display: flex;
-  justify-content: flex-end;
-  padding: 0 8px 4px;
-}
-#app.sidebar-collapsed #sidebar,
-#app.sidebar-collapsed #sidebar-resizer { display: none; }
-#sidebar-expand-btn {
-  /* Floating re-open control; sits right of the macOS traffic lights and
-     must stay clickable inside the draggable title-bar strip */
+#sidebar-toggle {
+  /* Stationary toggle: sits right of the macOS traffic lights and stays in
+     the same spot whether the sidebar is open or collapsed; must remain
+     clickable inside the draggable title-bar strip */
   position: fixed;
-  top: 8px;
+  top: 7px;
   left: 80px;
   z-index: 40;
-  display: none;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  display: flex;
+  align-items: center;
   -webkit-app-region: no-drag;
 }
-#sidebar-expand-btn.visible { display: block; }
+
+@media (prefers-reduced-motion: reduce) {
+  #sidebar { transition: none; }
+}
 
 #sidebar-resizer {
   width: 4px;

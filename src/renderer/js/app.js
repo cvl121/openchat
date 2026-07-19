@@ -3,7 +3,7 @@
 
 import { el, modal, toast } from './util.js';
 import { state, loadAll, scheduleSettingsSave, saveSettingsSync, isChatMode } from './state.js';
-import { initSidebar, renderSidebar } from './views/sidebar.js';
+import { initSidebar, renderSidebar, toggleSidebar } from './views/sidebar.js';
 import {
   initChat,
   renderChat,
@@ -150,7 +150,10 @@ function bindShortcuts() {
     if (!mod) return;
     const inChat = state.view === 'chat';
     const key = e.key.toLowerCase();
-    if (key === 'n' && e.shiftKey) {
+    if (key === '\\') {
+      e.preventDefault();
+      toggleSidebar();
+    } else if (key === 'n' && e.shiftKey) {
       e.preventDefault();
       if (!isChatMode()) openCharacterEditor(null);
     } else if (key === 'n') {
