@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('tavern', {
     delete: (charName, file) => invoke('chats:delete', charName, file),
     search: (query, charName) => invoke('chats:search', query, charName),
     export: (charName, file, format) => invoke('chats:export', charName, file, format),
+    import: (charName, sourcePath) => invoke('chats:import', charName, sourcePath),
     lastActive: () => invoke('chats:lastActive'),
   },
   worlds: {
@@ -39,6 +40,7 @@ contextBridge.exposeInMainWorld('tavern', {
     save: (book) => invoke('worlds:save', book),
     delete: (file) => invoke('worlds:delete', file),
     import: (filePath) => invoke('worlds:import', filePath),
+    export: (file) => invoke('worlds:export', file),
   },
   personas: {
     list: () => invoke('personas:list'),
@@ -71,7 +73,14 @@ contextBridge.exposeInMainWorld('tavern', {
     exportUpload: (file, destPath) => invoke('files:exportUpload', file, destPath),
   },
   misc: {
-    pathForFile: (file) => webUtils.getPathForFile(file),
+    // Mint the resolved path so main-process import handlers will accept it.
+    // webUtils only yields paths for genuine dropped/picked File objects, so
+    // the renderer can't mint arbitrary paths through here.
+    pathForFile: (file) => {
+      const p = webUtils.getPathForFile(file);
+      if (p) ipcRenderer.send('paths:mint', p);
+      return p;
+    },
     openExternal: (u) => invoke('misc:openExternal', u),
     dataDir: () => invoke('misc:dataDir'),
     importDataFolder: (dir) => invoke('misc:importDataFolder', dir),

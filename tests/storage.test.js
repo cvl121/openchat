@@ -16,6 +16,9 @@ import {
   rewriteChat,
   listChats,
   searchChats,
+  exportChatJSONL,
+  importChatJSONL,
+  exportWorldInfo,
   listPersonas,
   savePersonas,
   saveWorldInfo,
@@ -196,6 +199,92 @@ test('uploads: data URL round-trips as an image', () => {
 
 test('uploads: rejects non-data-URL payloads', () => {
   assert.throws(() => saveUploadData('x.png', 'not-a-data-url'), /data URL/);
+});
+
+test('settings: failed decryption never wipes the stored key blob', () => {
+  const encrypt = (s) => Buffer.from(s, 'utf8').toString('base64');
+  const decrypt = (s) => Buffer.from(s, 'base64').toString('utf8');
+  initStorage(tmp, { encryptString: encrypt, decryptString: decrypt });
+  const s = loadSettings();
+  s.apiKeys = { openai: 'sk-keepme' };
+  saveSettings(s);
+  // Keychain locked/denied: decryption throws
+  initStorage(tmp, {
+    encryptString: encrypt,
+    decryptString: () => {
+      throw new Error('denied');
+    },
+  });
+  const locked = loadSettings();
+  assert.deepEqual(locked.apiKeys, {});
+  assert.ok(locked.apiKeysEncrypted); // blob survived the load
+  saveSettings(locked); // must not re-encrypt the empty map over the blob
+  initStorage(tmp, { encryptString: encrypt, decryptString: decrypt });
+  assert.equal(loadSettings().apiKeys.openai, 'sk-keepme');
+  initStorage(tmp); // restore plaintext mode for later tests
+});
+
+test('chats: exported filenames are sanitized against traversal', () => {
+  assert.throws(() => exportChatJSONL('Hero', '../../user/settings.json', path.join(tmp, 'stolen.json')));
+  assert.ok(!fs.existsSync(path.join(tmp, 'stolen.json')));
+});
+
+test('chats: SillyTavern JSONL import round-trips messages and swipes', () => {
+  const src = path.join(tmp, 'st-chat.jsonl');
+  const lines = [
+    { user_name: 'Traveler', character_name: 'Old Name', create_date: '2025-05-01', chat_metadata: { note: 'x' } },
+    { name: 'Traveler', is_user: true, mes: 'Hello there', send_date: '2025-05-01' },
+    { name: 'Old Name', is_user: false, mes: 'Well met', send_date: '2025-05-01', swipes: ['Well met', 'Greetings'], swipe_id: 1 },
+  ];
+  fs.writeFileSync(src, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  const file = importChatJSONL('Hero', src);
+  const { metadata, messages } = loadChat('Hero', file);
+  assert.equal(metadata.character_name, 'Hero'); // rebound to the importing character
+  assert.equal(metadata.user_name, 'Traveler');
+  assert.deepEqual(metadata.chat_metadata, { note: 'x' });
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].mes, 'Hello there');
+  assert.deepEqual(messages[1].swipes, ['Well met', 'Greetings']);
+  assert.equal(messages[1].swipe_id, 1);
+
+  // Headerless files (every line a message) are tolerated
+  fs.writeFileSync(src, JSON.stringify({ name: 'X', is_user: true, mes: 'solo line' }) + '\n');
+  const file2 = importChatJSONL('Hero', src);
+  assert.equal(loadChat('Hero', file2).messages[0].mes, 'solo line');
+
+  // Malformed files are rejected
+  fs.writeFileSync(src, 'not json at all\n');
+  assert.throws(() => importChatJSONL('Hero', src), /JSONL/);
+});
+
+test('world info: selective flag normalizes and export writes ST format', () => {
+  const saved = saveWorldInfo({
+    name: 'Exportia',
+    entries: [
+      {
+        keys: ['dragon'],
+        secondary_keys: ['red'],
+        selective: true,
+        content: 'The red dragon.',
+        constant: false,
+        enabled: false,
+        insertion_order: 7,
+      },
+    ],
+    global: false,
+  });
+  const book = listWorldInfo().find((b) => b.name === 'Exportia');
+  assert.equal(book.entries[0].selective, true);
+  assert.deepEqual(book.entries[0].secondary_keys, ['red']);
+
+  const dest = path.join(tmp, 'exportia-st.json');
+  exportWorldInfo(saved.file, dest);
+  const st = JSON.parse(fs.readFileSync(dest, 'utf8'));
+  assert.deepEqual(st.entries['0'].key, ['dragon']);
+  assert.deepEqual(st.entries['0'].keysecondary, ['red']);
+  assert.equal(st.entries['0'].selective, true);
+  assert.equal(st.entries['0'].disable, true);
+  assert.equal(st.entries['0'].order, 7);
 });
 
 test('settings: chat mode is the default app mode', () => {

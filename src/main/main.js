@@ -1,7 +1,7 @@
 import { app, BrowserWindow, protocol, net, Menu, shell, safeStorage } from 'electron';
 import path from 'node:path';
 import url from 'node:url';
-import { initStorage, resolveDataPath, loadSettings } from './storage.js';
+import { initStorage, resolveDataPath, loadSettings, setTrashItem } from './storage.js';
 import { registerIPC } from './ipc.js';
 import { checkForUpdate } from './updates.js';
 
@@ -121,6 +121,8 @@ app.whenReady().then(() => {
       ? (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64'))
       : null,
   });
+  // Deletions go to the OS trash so misclicks are recoverable
+  setTrashItem((p) => shell.trashItem(p));
   registerIPC();
   buildMenu();
 

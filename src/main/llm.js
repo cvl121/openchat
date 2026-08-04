@@ -2,8 +2,9 @@
 // constraints) and stream chunks back to the renderer via callbacks.
 //
 // Providers: OpenRouter (primary), OpenAI, Anthropic Claude, Google Gemini,
-// Ollama (local). OpenRouter/OpenAI/Ollama share the OpenAI-compatible
-// chat/completions wire format.
+// DeepSeek, Kimi (Moonshot), Qwen (DashScope), Ollama (local), and custom
+// OpenAI-compatible servers. All but Claude/Gemini/Ollama share the
+// OpenAI-compatible chat/completions wire format.
 
 export const PROVIDERS = {
   openrouter: {
@@ -30,11 +31,35 @@ export const PROVIDERS = {
     requiresKey: true,
     defaultModel: 'gemini-3.1-pro-preview',
   },
+  deepseek: {
+    label: 'DeepSeek',
+    baseURL: 'https://api.deepseek.com/v1',
+    requiresKey: true,
+    defaultModel: 'deepseek-chat',
+  },
+  kimi: {
+    label: 'Kimi (Moonshot AI)',
+    baseURL: 'https://api.moonshot.ai/v1',
+    requiresKey: true,
+    defaultModel: 'kimi-latest',
+  },
+  qwen: {
+    label: 'Qwen (Alibaba)',
+    baseURL: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+    requiresKey: true,
+    defaultModel: 'qwen-plus',
+  },
   ollama: {
     label: 'Ollama (local)',
     baseURL: 'http://localhost:11434/v1',
     requiresKey: false,
     defaultModel: 'llama3.1',
+  },
+  custom: {
+    label: 'Custom (OpenAI-compatible)',
+    baseURL: '',
+    requiresKey: false,
+    defaultModel: '',
   },
 };
 
@@ -59,14 +84,22 @@ export const FALLBACK_MODELS = {
     'gemini-3.1-pro-preview', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash',
     'gemini-2.0-flash-lite', 'gemini-1.5-pro', 'gemini-1.5-flash',
   ],
+  deepseek: ['deepseek-chat', 'deepseek-reasoner'],
+  kimi: [
+    'kimi-latest', 'kimi-k2-turbo-preview', 'kimi-k2-0905-preview', 'kimi-thinking-preview',
+    'moonshot-v1-128k', 'moonshot-v1-32k', 'moonshot-v1-8k',
+  ],
+  qwen: ['qwen-plus', 'qwen-max', 'qwen-turbo', 'qwen-flash', 'qwen3-max'],
   ollama: ['llama3.3', 'llama3.1', 'mistral', 'qwen2.5', 'gemma3', 'deepseek-r1'],
+  custom: [],
 };
 
 export class LLMError extends Error {
-  constructor(message, { status = 0, body = '' } = {}) {
+  constructor(message, { status = 0, body = '', retryAfterMs = null } = {}) {
     super(message);
     this.status = status;
     this.body = body;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -96,18 +129,26 @@ function openAIContent(m) {
 
 function openAICompatibleBody(messages, config, stream) {
   const p = config.params;
+  // OpenAI reasoning models (o-series, gpt-5) take max_completion_tokens and
+  // reject non-default sampling parameters.
+  const reasoning = config.provider === 'openai' && /^(o\d|gpt-5)/.test(config.model);
   const body = {
     model: config.model,
     messages: messages.map((m) => ({ role: m.role, content: openAIContent(m) })),
-    max_tokens: p.max_tokens,
-    temperature: p.temperature,
-    top_p: p.top_p,
-    frequency_penalty: p.frequency_penalty,
-    presence_penalty: p.presence_penalty,
+    ...(reasoning
+      ? { max_completion_tokens: p.max_tokens }
+      : {
+          max_tokens: p.max_tokens,
+          temperature: p.temperature,
+          top_p: p.top_p,
+          frequency_penalty: p.frequency_penalty,
+          presence_penalty: p.presence_penalty,
+        }),
     stream,
   };
-  // OpenRouter passes provider-specific sampler params straight through
-  if (config.provider === 'openrouter' || config.provider === 'ollama') {
+  // OpenRouter and most self-hosted OpenAI-compatible servers pass
+  // provider-specific sampler params straight through
+  if (config.provider === 'openrouter' || config.provider === 'custom') {
     if (p.min_p > 0) body.min_p = p.min_p;
     if (p.top_k > 0) body.top_k = p.top_k;
     if (p.top_a > 0) body.top_a = p.top_a;
@@ -120,6 +161,32 @@ function openAICompatibleBody(messages, config, stream) {
     body.modalities = ['image', 'text'];
   }
   return body;
+}
+
+function ollamaBody(messages, config, stream) {
+  const p = config.params;
+  return {
+    model: config.model,
+    messages: messages.map((m) => ({
+      role: m.role,
+      content: m.content ?? '',
+      ...(m.images?.length
+        ? { images: m.images.map(parseDataURL).filter(Boolean).map(({ data }) => data) }
+        : {}),
+    })),
+    options: {
+      num_predict: p.max_tokens,
+      temperature: p.temperature,
+      top_p: p.top_p,
+      ...(p.context_size > 0 ? { num_ctx: p.context_size } : {}),
+      ...(p.top_k > 0 ? { top_k: p.top_k } : {}),
+      ...(p.min_p > 0 ? { min_p: p.min_p } : {}),
+      ...(p.repetition_penalty !== 1.0 ? { repeat_penalty: p.repetition_penalty } : {}),
+      ...(p.seed >= 0 ? { seed: p.seed } : {}),
+      ...(p.stop_sequences?.length ? { stop: p.stop_sequences } : {}),
+    },
+    stream,
+  };
 }
 
 function buildRequest(messages, config, stream) {
@@ -139,7 +206,13 @@ function buildRequest(messages, config, stream) {
       };
 
     case 'openai':
-    case 'ollama':
+    case 'deepseek':
+    case 'kimi':
+    case 'qwen':
+    case 'custom':
+      if (config.provider === 'custom' && !base) {
+        throw new LLMError('Custom provider needs a base URL — set one in Settings → API');
+      }
       return {
         url: `${base}/chat/completions`,
         headers: {
@@ -147,6 +220,17 @@ function buildRequest(messages, config, stream) {
           ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
         },
         body: openAICompatibleBody(messages, config, stream),
+      };
+
+    case 'ollama':
+      // Native API rather than the OpenAI shim: only /api/chat accepts
+      // options.num_ctx, without which long chats silently truncate at
+      // Ollama's small default context window. Streams NDJSON, not SSE.
+      return {
+        url: `${base.replace(/\/v1$/, '')}/api/chat`,
+        headers: { 'Content-Type': 'application/json' },
+        body: ollamaBody(messages, config, stream),
+        ndjson: true,
       };
 
     case 'claude': {
@@ -251,7 +335,10 @@ function extractChunk(provider, json) {
     case 'claude':
       return json.type === 'content_block_delta' ? (json.delta?.text ?? null) : null;
     case 'gemini':
-      return json.candidates?.[0]?.content?.parts?.[0]?.text ?? null;
+      // Multi-part chunks happen in image-output mode (text after an image part)
+      return json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') || null;
+    case 'ollama':
+      return json.message?.content ?? null;
     default:
       return json.choices?.[0]?.delta?.content ?? null;
   }
@@ -263,6 +350,8 @@ function extractComplete(provider, json) {
       return (json.content ?? []).map((b) => b.text ?? '').join('');
     case 'gemini':
       return json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
+    case 'ollama':
+      return json.message?.content ?? '';
     default:
       return json.choices?.[0]?.message?.content ?? '';
   }
@@ -279,6 +368,8 @@ function extractFinishReason(provider, json) {
       return json.delta?.stop_reason ?? json.stop_reason ?? null;
     case 'gemini':
       return json.candidates?.[0]?.finishReason ?? null;
+    case 'ollama':
+      return json.done ? (json.done_reason ?? 'stop') : null;
     default:
       return json.choices?.[0]?.finish_reason ?? null;
   }
@@ -295,6 +386,7 @@ function extractImages(provider, json) {
         .map((d) => `data:${d.mimeType ?? d.mime_type ?? 'image/png'};base64,${d.data}`);
     }
     case 'claude':
+    case 'ollama':
       return [];
     default: {
       // OpenRouter image-capable models attach images to the delta/message
@@ -338,6 +430,23 @@ async function* sseEvents(response) {
   }
 }
 
+/** Async-iterate JSON lines from an NDJSON stream (Ollama's native API). */
+async function* ndjsonEvents(response) {
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for await (const chunk of response.body) {
+    buffer += decoder.decode(chunk, { stream: true });
+    let nl;
+    while ((nl = buffer.indexOf('\n')) !== -1) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (line) yield line;
+    }
+  }
+  buffer = (buffer + decoder.decode()).trim();
+  if (buffer) yield buffer;
+}
+
 async function readErrorBody(response) {
   try {
     const text = await response.text();
@@ -355,67 +464,154 @@ async function readErrorBody(response) {
 // ---------------------------------------------------------------------------
 // Public API
 
+const MAX_SEND_RETRIES = 2;
+const STREAM_IDLE_TIMEOUT_MS = 120_000;
+
+/** Transient failures worth retrying: rate limits, server errors, network drops. */
+function isRetryable(err) {
+  if (err?.name === 'AbortError') return false;
+  if (err instanceof LLMError) return err.status === 429 || err.status >= 500;
+  return true; // fetch-level network failure
+}
+
+function retryDelayMs(err, attempt) {
+  if (err?.retryAfterMs != null) return Math.min(err.retryAfterMs, 30_000);
+  return 1000 * 2 ** attempt; // 1s, 2s
+}
+
+function abortableDelay(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        reject(new DOMException('Aborted', 'AbortError'));
+      },
+      { once: true }
+    );
+  });
+}
+
 /**
  * Stream a chat completion. Calls onChunk(text) as tokens arrive,
  * onImage(dataURL) for image outputs (image-capable models), and
  * onFinishReason(reason) with the provider's stop reason (e.g. 'length'
  * when the response was truncated by the max-tokens limit).
  * Returns the full response text. Abortable via opts.signal.
+ *
+ * Transient failures (429/5xx/network) are retried with backoff — but never
+ * once any content has reached the callbacks, and never on abort.
  */
 export async function sendMessage(messages, config, onChunk, { signal, onImage, onFinishReason } = {}) {
   const stream = config.params.stream_response !== false;
   const req = buildRequest(messages, config, stream);
-  const response = await fetch(req.url, {
-    method: 'POST',
-    headers: req.headers,
-    body: JSON.stringify(req.body),
-    signal,
-  });
-  if (!response.ok) {
-    const body = await readErrorBody(response);
-    throw new LLMError(`${PROVIDERS[config.provider]?.label ?? config.provider} error (${response.status}): ${body}`, {
-      status: response.status,
-      body,
-    });
-  }
-
-  if (!stream) {
-    const json = await response.json();
-    const text = extractComplete(config.provider, json);
-    if (text) onChunk?.(text);
-    for (const image of extractImages(config.provider, json)) onImage?.(image);
-    const reason = extractFinishReason(config.provider, json);
-    if (reason) onFinishReason?.(reason);
-    return text;
-  }
-
-  let full = '';
-  let finishReason = null;
-  for await (const data of sseEvents(response)) {
-    let json;
-    try {
-      json = JSON.parse(data);
-    } catch {
-      continue;
-    }
-    if (json.error) {
-      throw new LLMError(json.error.message ?? 'Stream error', { body: data });
-    }
-    const text = extractChunk(config.provider, json);
-    if (text) {
-      full += text;
+  let delivered = false;
+  const callbacks = {
+    onChunk: (text) => {
+      delivered = true;
       onChunk?.(text);
+    },
+    onImage: (url) => {
+      delivered = true;
+      onImage?.(url);
+    },
+    onFinishReason,
+  };
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await attemptSend(req, config, stream, callbacks, signal);
+    } catch (err) {
+      if (delivered || attempt >= MAX_SEND_RETRIES || !isRetryable(err) || signal?.aborted) throw err;
+      await abortableDelay(retryDelayMs(err, attempt), signal);
     }
-    for (const image of extractImages(config.provider, json)) onImage?.(image);
-    finishReason = extractFinishReason(config.provider, json) ?? finishReason;
   }
-  if (finishReason) onFinishReason?.(finishReason);
-  return full;
+}
+
+async function attemptSend(req, config, stream, { onChunk, onImage, onFinishReason }, signal) {
+  // A stalled connection would otherwise hang until manual stop: abort if no
+  // bytes arrive for STREAM_IDLE_TIMEOUT_MS.
+  const idle = new AbortController();
+  let idleTimer = null;
+  let idledOut = false;
+  const resetIdle = () => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      idledOut = true;
+      idle.abort();
+    }, STREAM_IDLE_TIMEOUT_MS);
+  };
+  resetIdle();
+  try {
+    const response = await fetch(req.url, {
+      method: 'POST',
+      headers: req.headers,
+      body: JSON.stringify(req.body),
+      signal: signal ? AbortSignal.any([signal, idle.signal]) : idle.signal,
+    });
+    if (!response.ok) {
+      const body = await readErrorBody(response);
+      const retryAfter = Number(response.headers.get('retry-after'));
+      throw new LLMError(
+        `${PROVIDERS[config.provider]?.label ?? config.provider} error (${response.status}): ${body}`,
+        {
+          status: response.status,
+          body,
+          retryAfterMs: Number.isFinite(retryAfter) ? retryAfter * 1000 : null,
+        }
+      );
+    }
+
+    if (!stream) {
+      const json = await response.json();
+      const text = extractComplete(config.provider, json);
+      if (text) onChunk?.(text);
+      for (const image of extractImages(config.provider, json)) onImage?.(image);
+      const reason = extractFinishReason(config.provider, json);
+      if (reason) onFinishReason?.(reason);
+      return text;
+    }
+
+    let full = '';
+    let finishReason = null;
+    const events = req.ndjson ? ndjsonEvents(response) : sseEvents(response);
+    for await (const data of events) {
+      resetIdle();
+      let json;
+      try {
+        json = JSON.parse(data);
+      } catch {
+        continue;
+      }
+      if (json.error) {
+        const message = json.error.message ?? (typeof json.error === 'string' ? json.error : 'Stream error');
+        throw new LLMError(message, { body: data });
+      }
+      const text = extractChunk(config.provider, json);
+      if (text) {
+        full += text;
+        onChunk?.(text);
+      }
+      for (const image of extractImages(config.provider, json)) onImage?.(image);
+      finishReason = extractFinishReason(config.provider, json) ?? finishReason;
+    }
+    if (finishReason) onFinishReason?.(finishReason);
+    return full;
+  } catch (err) {
+    if (idledOut) {
+      throw new LLMError('The connection stalled — no data received for 2 minutes', { status: 0 });
+    }
+    throw err;
+  } finally {
+    clearTimeout(idleTimer);
+  }
 }
 
 /**
  * Fetch the live model list for a provider, authenticated with the user's
- * API key where the provider requires it. Falls back to a static list.
+ * API key where the provider requires it. Network failures fall back to a
+ * static list; auth failures (401/403) throw so the UI can flag a bad key
+ * at the model picker instead of at first send.
  * Each model: { id, name, context, imageOutput }.
  */
 export async function listModels(config) {
@@ -425,7 +621,7 @@ export async function listModels(config) {
         const res = await fetch(`${effectiveBaseURL(config)}/models`, {
           headers: config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {},
         });
-        if (!res.ok) throw new LLMError(`HTTP ${res.status}`);
+        if (!res.ok) throw new LLMError(`HTTP ${res.status}`, { status: res.status });
         const json = await res.json();
         return (json.data ?? [])
           .map((m) => ({
@@ -440,18 +636,31 @@ export async function listModels(config) {
         const res = await fetch(`${effectiveBaseURL(config)}/models`, {
           headers: { Authorization: `Bearer ${config.apiKey}` },
         });
-        if (!res.ok) throw new LLMError(`HTTP ${res.status}`);
+        if (!res.ok) throw new LLMError(`HTTP ${res.status}`, { status: res.status });
         const json = await res.json();
         return (json.data ?? [])
           .map((m) => ({ id: m.id, name: m.id, context: null, imageOutput: false }))
           .filter((m) => /gpt|^o\d/.test(m.id))
           .sort((a, b) => a.id.localeCompare(b.id));
       }
+      case 'deepseek':
+      case 'kimi':
+      case 'qwen':
+      case 'custom': {
+        const res = await fetch(`${effectiveBaseURL(config)}/models`, {
+          headers: config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {},
+        });
+        if (!res.ok) throw new LLMError(`HTTP ${res.status}`, { status: res.status });
+        const json = await res.json();
+        return (json.data ?? [])
+          .map((m) => ({ id: m.id, name: m.id, context: null, imageOutput: false }))
+          .sort((a, b) => a.id.localeCompare(b.id));
+      }
       case 'claude': {
         const res = await fetch(`${effectiveBaseURL(config)}/models?limit=100`, {
           headers: { 'x-api-key': config.apiKey, 'anthropic-version': '2023-06-01' },
         });
-        if (!res.ok) throw new LLMError(`HTTP ${res.status}`);
+        if (!res.ok) throw new LLMError(`HTTP ${res.status}`, { status: res.status });
         const json = await res.json();
         return (json.data ?? [])
           .map((m) => ({ id: m.id, name: m.display_name ?? m.id, context: null, imageOutput: false }))
@@ -461,7 +670,7 @@ export async function listModels(config) {
         const res = await fetch(`${effectiveBaseURL(config)}/models?pageSize=200`, {
           headers: { 'x-goog-api-key': config.apiKey },
         });
-        if (!res.ok) throw new LLMError(`HTTP ${res.status}`);
+        if (!res.ok) throw new LLMError(`HTTP ${res.status}`, { status: res.status });
         const json = await res.json();
         return (json.models ?? [])
           .filter((m) => (m.supportedGenerationMethods ?? []).includes('generateContent'))
@@ -476,14 +685,20 @@ export async function listModels(config) {
       case 'ollama': {
         const base = effectiveBaseURL(config).replace(/\/v1$/, '');
         const res = await fetch(`${base}/api/tags`);
-        if (!res.ok) throw new LLMError(`HTTP ${res.status}`);
+        if (!res.ok) throw new LLMError(`HTTP ${res.status}`, { status: res.status });
         const json = await res.json();
         return (json.models ?? []).map((m) => ({ id: m.name, name: m.name, context: null, imageOutput: false }));
       }
       default:
         return FALLBACK_MODELS[config.provider].map((id) => ({ id, name: id, context: null, imageOutput: false }));
     }
-  } catch {
+  } catch (err) {
+    if (err instanceof LLMError && (err.status === 401 || err.status === 403)) {
+      const label = PROVIDERS[config.provider]?.label ?? config.provider;
+      throw new LLMError(`${label} rejected the API key (HTTP ${err.status}) — check it in Settings → API`, {
+        status: err.status,
+      });
+    }
     return (FALLBACK_MODELS[config.provider] ?? []).map((id) => ({ id, name: id, context: null, imageOutput: false }));
   }
 }

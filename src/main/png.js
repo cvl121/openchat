@@ -104,7 +104,12 @@ export function normalizeCard(json) {
   return {
     spec: 'chara_card_v2',
     spec_version: '2.0',
+    // Spread first so unknown fields survive the round-trip: ST stores
+    // talkativeness/depth_prompt/favs in data.extensions, and V3 cards carry
+    // assets/nickname/group_only_greetings — dropping any of it would
+    // silently strip imported cards on every save.
     data: {
+      ...data,
       name: data.name ?? 'Unnamed',
       description: data.description ?? '',
       personality: data.personality ?? '',

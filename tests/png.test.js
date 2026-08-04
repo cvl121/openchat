@@ -49,6 +49,31 @@ test('character card embed/parse round-trip', () => {
   assert.deepEqual(parsed.data.alternate_greetings, []);
 });
 
+test('normalizeCard preserves extensions and V3 fields through round-trips', () => {
+  const card = normalizeCard({
+    spec: 'chara_card_v2',
+    data: {
+      name: 'Keeper',
+      extensions: { talkativeness: '0.8', depth_prompt: { prompt: 'deep', depth: 4 }, fav: true },
+      assets: [{ type: 'icon', uri: 'embedded://x.png' }],
+      nickname: 'Kee',
+      group_only_greetings: ['hi all'],
+    },
+  });
+  assert.deepEqual(card.data.extensions, {
+    talkativeness: '0.8',
+    depth_prompt: { prompt: 'deep', depth: 4 },
+    fav: true,
+  });
+  assert.equal(card.data.nickname, 'Kee');
+  assert.deepEqual(card.data.group_only_greetings, ['hi all']);
+  // And through a PNG embed/parse cycle (i.e. every save)
+  const parsed = parseCharacterCard(embedCharacterCard(minimalPNG(), card));
+  assert.deepEqual(parsed.data.extensions.depth_prompt, { prompt: 'deep', depth: 4 });
+  assert.deepEqual(parsed.data.assets, [{ type: 'icon', uri: 'embedded://x.png' }]);
+  assert.equal(parsed.data.name, 'Keeper');
+});
+
 test('normalizeCard handles V2 wrapper and bare data', () => {
   const v2 = normalizeCard({ spec: 'chara_card_v2', data: { name: 'A', tags: ['x'] } });
   assert.equal(v2.data.name, 'A');

@@ -208,9 +208,22 @@ test('listModels falls back to static list when unreachable', async () => {
   const models = await listModels({
     provider: 'claude',
     apiKey: '',
-    baseURL: '',
+    baseURL: 'http://127.0.0.1:1', // nothing listens here
   });
   assert.deepEqual(models.map((m) => m.id), FALLBACK_MODELS.claude);
+});
+
+test('listModels surfaces auth errors instead of falling back', async () => {
+  const server = http.createServer((req, res) => {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: 'bad key' } }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    await assert.rejects(listModels(config(server)), /rejected the API key/);
+  } finally {
+    server.close();
+  }
 });
 
 test('provider registry covers all fallback lists', () => {
@@ -367,7 +380,165 @@ test('listModels flags image-output models from OpenRouter metadata', async () =
   }
 });
 
+test('OpenAI reasoning models get max_completion_tokens and no sampling params', async () => {
+  const server = await startMockServer();
+  try {
+    await sendMessage([{ role: 'user', content: 'hi' }], config(server, { provider: 'openai', model: 'o3-mini' }), null);
+    let body = server.lastRequest.body;
+    assert.equal(body.max_completion_tokens, 128);
+    assert.ok(!('max_tokens' in body));
+    assert.ok(!('temperature' in body));
+    assert.ok(!('top_p' in body));
+    await sendMessage([{ role: 'user', content: 'hi' }], config(server, { provider: 'openai', model: 'gpt-4o' }), null);
+    body = server.lastRequest.body;
+    assert.equal(body.max_tokens, 128);
+    assert.equal(body.temperature, 0.7);
+  } finally {
+    server.close();
+  }
+});
+
+test('custom provider requires a base URL and auth is optional', async () => {
+  const server = await startMockServer();
+  try {
+    await assert.rejects(
+      sendMessage([{ role: 'user', content: 'hi' }], config(server, { provider: 'custom', baseURL: '' }), null),
+      /base URL/
+    );
+    await sendMessage([{ role: 'user', content: 'hi' }], config(server, { provider: 'custom', apiKey: '' }), null);
+    assert.equal(server.lastRequest.headers.authorization, undefined);
+    await sendMessage([{ role: 'user', content: 'hi' }], config(server, { provider: 'custom' }), null);
+    assert.equal(server.lastRequest.headers.authorization, 'Bearer test-key');
+  } finally {
+    server.close();
+  }
+});
+
+test('retries a 429 with Retry-After and succeeds on the second attempt', async () => {
+  let requests = 0;
+  const server = http.createServer((req, res) => {
+    requests++;
+    if (requests === 1) {
+      res.writeHead(429, { 'Retry-After': '0', 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'rate limited' } }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'after retry' } }] })}\n\n`);
+    res.write('data: [DONE]\n\n');
+    res.end();
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const full = await sendMessage([{ role: 'user', content: 'hi' }], config(server), null);
+    assert.equal(full, 'after retry');
+    assert.equal(requests, 2);
+  } finally {
+    server.close();
+  }
+});
+
+test('persistent 5xx gives up after the retry budget', async () => {
+  let requests = 0;
+  const server = http.createServer((req, res) => {
+    requests++;
+    res.writeHead(503, { 'Retry-After': '0', 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: 'overloaded' } }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    await assert.rejects(
+      sendMessage([{ role: 'user', content: 'hi' }], config(server), null),
+      (err) => err instanceof LLMError && err.status === 503
+    );
+    assert.equal(requests, 3); // initial + 2 retries
+  } finally {
+    server.close();
+  }
+});
+
+test('stream failures after content arrived are not retried', async () => {
+  let requests = 0;
+  const server = http.createServer((req, res) => {
+    requests++;
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'partial' } }] })}\n\n`);
+    setTimeout(() => res.destroy(), 20);
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const chunks = [];
+    await assert.rejects(
+      sendMessage([{ role: 'user', content: 'hi' }], config(server), (t) => chunks.push(t))
+    );
+    assert.deepEqual(chunks, ['partial']);
+    assert.equal(requests, 1);
+  } finally {
+    server.close();
+  }
+});
+
+test('ollama uses the native /api/chat with num_ctx and NDJSON streaming', async () => {
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      server.lastRequest = { url: req.url, body: JSON.parse(body) };
+      res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
+      res.write(JSON.stringify({ message: { content: 'Hello ' }, done: false }) + '\n');
+      res.write(JSON.stringify({ message: { content: 'local' }, done: true, done_reason: 'stop' }) + '\n');
+      res.end();
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const cfg = config(server, { provider: 'ollama', apiKey: '' });
+    cfg.params.context_size = 8192;
+    const chunks = [];
+    let reason = null;
+    const full = await sendMessage(
+      [{ role: 'user', content: 'hi', images: ['data:image/png;base64,QUJD'] }],
+      cfg,
+      (t) => chunks.push(t),
+      { onFinishReason: (r) => (reason = r) }
+    );
+    assert.equal(full, 'Hello local');
+    assert.deepEqual(chunks, ['Hello ', 'local']);
+    assert.equal(reason, 'stop');
+    assert.ok(server.lastRequest.url.endsWith('/api/chat'));
+    assert.equal(server.lastRequest.body.options.num_ctx, 8192);
+    assert.equal(server.lastRequest.body.options.num_predict, 128);
+    assert.deepEqual(server.lastRequest.body.messages[0].images, ['QUJD']);
+  } finally {
+    server.close();
+  }
+});
+
 test('default models point at Gemini 3.1 Pro', () => {
   assert.equal(PROVIDERS.openrouter.defaultModel, 'google/gemini-3.1-pro-preview');
   assert.equal(PROVIDERS.gemini.defaultModel, 'gemini-3.1-pro-preview');
+});
+
+test('deepseek/kimi/qwen use the OpenAI wire format with bearer auth', async () => {
+  const server = await startMockServer();
+  try {
+    for (const provider of ['deepseek', 'kimi', 'qwen']) {
+      const full = await sendMessage([{ role: 'user', content: 'hi' }], config(server, { provider }), null);
+      assert.equal(full, 'Hello from the tavern!');
+      assert.ok(server.lastRequest.url.endsWith('/chat/completions'));
+      assert.equal(server.lastRequest.headers.authorization, 'Bearer test-key');
+      assert.equal(server.lastRequest.body.max_tokens, 128);
+    }
+  } finally {
+    server.close();
+  }
+});
+
+test('deepseek/kimi/qwen have hosted default base URLs and fallback models', () => {
+  for (const provider of ['deepseek', 'kimi', 'qwen']) {
+    assert.match(PROVIDERS[provider].baseURL, /^https:\/\//);
+    assert.equal(PROVIDERS[provider].requiresKey, true);
+    assert.ok(FALLBACK_MODELS[provider].length > 0);
+    assert.ok(FALLBACK_MODELS[provider].includes(PROVIDERS[provider].defaultModel));
+  }
 });

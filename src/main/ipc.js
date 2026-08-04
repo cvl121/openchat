@@ -10,6 +10,23 @@ import { checkForUpdate } from './updates.js';
 
 const activeRequests = new Map(); // requestId -> AbortController
 
+// Paths the user actually picked (file dialogs, drag-and-drop via webUtils).
+// Handlers that read renderer-supplied paths only accept minted ones, so a
+// compromised renderer can't turn an import channel into arbitrary file reads.
+const mintedPaths = new Set();
+
+function mintPath(p) {
+  if (typeof p === 'string' && p) mintedPaths.add(path.resolve(p));
+}
+
+function assertMinted(p) {
+  const resolved = path.resolve(String(p));
+  for (const minted of mintedPaths) {
+    if (resolved === minted || resolved.startsWith(minted + path.sep)) return resolved;
+  }
+  throw new Error('Path was not selected via a file dialog or drag-and-drop');
+}
+
 function wrap(handler) {
   return async (_event, ...args) => {
     try {
@@ -34,10 +51,20 @@ export function registerIPC() {
     }
   });
 
+  // Preload mints drag-and-drop paths as it resolves them via webUtils;
+  // synthetic File objects have no backing path, so this can't be forged.
+  ipcMain.on('paths:mint', (_event, p) => mintPath(p));
+
   // Characters
   ipcMain.handle('characters:list', wrap(() => storage.listCharacters()));
-  ipcMain.handle('characters:import', wrap((filePath) => storage.importCharacter(filePath)));
-  ipcMain.handle('characters:save', wrap((card, opts) => storage.saveCharacter(card, opts ?? {})));
+  ipcMain.handle('characters:import', wrap((filePath) => storage.importCharacter(assertMinted(filePath))));
+  ipcMain.handle(
+    'characters:save',
+    wrap((card, opts) => {
+      if (opts?.avatarPath) assertMinted(opts.avatarPath);
+      return storage.saveCharacter(card, opts ?? {});
+    })
+  );
   ipcMain.handle('characters:delete', wrap((filename) => storage.deleteCharacter(filename)));
   ipcMain.handle(
     'characters:export',
@@ -63,6 +90,7 @@ export function registerIPC() {
   ipcMain.handle('chats:delete', wrap((charName, file) => storage.deleteChat(charName, file)));
   ipcMain.handle('chats:search', wrap((query, charName) => storage.searchChats(query, charName)));
   ipcMain.handle('chats:lastActive', wrap(() => storage.lastActiveChatCharacter()));
+  ipcMain.handle('chats:import', wrap((charName, sourcePath) => storage.importChatJSONL(charName, assertMinted(sourcePath))));
   ipcMain.handle(
     'chats:export',
     wrap(async (charName, file, format) => {
@@ -82,18 +110,30 @@ export function registerIPC() {
   ipcMain.handle('worlds:list', wrap(() => storage.listWorldInfo()));
   ipcMain.handle('worlds:save', wrap((book) => storage.saveWorldInfo(book)));
   ipcMain.handle('worlds:delete', wrap((file) => storage.deleteWorldInfo(file)));
-  ipcMain.handle('worlds:import', wrap((filePath) => storage.importWorldInfo(filePath)));
+  ipcMain.handle('worlds:import', wrap((filePath) => storage.importWorldInfo(assertMinted(filePath))));
+  ipcMain.handle(
+    'worlds:export',
+    wrap(async (file) => {
+      const win = BrowserWindow.getFocusedWindow();
+      const { canceled, filePath } = await dialog.showSaveDialog(win, {
+        defaultPath: String(file).replace(/\.json$/i, '') + '.json',
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+      if (canceled || !filePath) return false;
+      return storage.exportWorldInfo(file, filePath);
+    })
+  );
 
   // Personas
   ipcMain.handle('personas:list', wrap(() => storage.listPersonas()));
   ipcMain.handle('personas:save', wrap((personas) => storage.savePersonas(personas)));
-  ipcMain.handle('personas:saveAvatar', wrap((id, src) => storage.savePersonaAvatar(id, src)));
+  ipcMain.handle('personas:saveAvatar', wrap((id, src) => storage.savePersonaAvatar(id, assertMinted(src))));
 
   // Presets
   ipcMain.handle('presets:list', wrap(() => storage.listPresets()));
   ipcMain.handle('presets:save', wrap((preset) => storage.savePreset(preset)));
   ipcMain.handle('presets:delete', wrap((name) => storage.deletePreset(name)));
-  ipcMain.handle('presets:import', wrap((filePath) => storage.importPreset(filePath)));
+  ipcMain.handle('presets:import', wrap((filePath) => storage.importPreset(assertMinted(filePath))));
   ipcMain.handle(
     'presets:export',
     wrap(async (name) => {
@@ -108,7 +148,7 @@ export function registerIPC() {
   );
 
   // Uploads (chat attachments + generated images)
-  ipcMain.handle('files:importUpload', wrap((sourcePath) => storage.importUpload(sourcePath)));
+  ipcMain.handle('files:importUpload', wrap((sourcePath) => storage.importUpload(assertMinted(sourcePath))));
   ipcMain.handle('files:saveUpload', wrap((name, dataURL) => storage.saveUploadData(name, dataURL)));
   ipcMain.handle('files:readUpload', wrap((file) => storage.readUploadData(file)));
   // Save an upload (generated image, attachment) somewhere the user picks.
@@ -203,7 +243,9 @@ export function registerIPC() {
         properties: ['openFile', ...(options?.multi ? ['multiSelections'] : [])],
         filters: options?.filters ?? [],
       });
-      return canceled ? [] : filePaths;
+      if (canceled) return [];
+      filePaths.forEach(mintPath);
+      return filePaths;
     })
   );
   ipcMain.handle(
@@ -213,7 +255,9 @@ export function registerIPC() {
       const { canceled, filePaths } = await dialog.showOpenDialog(win, {
         properties: ['openDirectory'],
       });
-      return canceled ? null : filePaths[0];
+      if (canceled) return null;
+      mintPath(filePaths[0]);
+      return filePaths[0];
     })
   );
   ipcMain.handle('misc:openExternal', wrap((url) => {
@@ -221,7 +265,7 @@ export function registerIPC() {
     return shell.openExternal(url);
   }));
   ipcMain.handle('misc:dataDir', wrap(() => storage.dataDir()));
-  ipcMain.handle('misc:importDataFolder', wrap((dir) => storage.importDataFolder(dir)));
+  ipcMain.handle('misc:importDataFolder', wrap((dir) => storage.importDataFolder(assertMinted(dir))));
   ipcMain.handle('misc:appVersion', wrap(() => app.getVersion()));
 
   // Manual update check (Settings → General). Deliberately ignores the

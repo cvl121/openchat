@@ -26,6 +26,27 @@ let DATA_DIR = null;
 // this module stays Electron-free for tests. Null = store secrets in plaintext.
 let SECRETS = { encryptString: null, decryptString: null };
 
+// OS-trash mover (Electron shell.trashItem), injected by main.js for the same
+// reason. Null = hard delete.
+let TRASH_ITEM = null;
+
+export function setTrashItem(fn) {
+  TRASH_ITEM = fn;
+}
+
+async function removeFile(full) {
+  if (!fs.existsSync(full)) return;
+  if (TRASH_ITEM) {
+    try {
+      await TRASH_ITEM(full);
+      return;
+    } catch {
+      // e.g. no trash on this filesystem — fall through to hard delete
+    }
+  }
+  fs.unlinkSync(full);
+}
+
 const SUBDIRS = ['characters', 'chats', 'worlds', 'user', 'User Avatars', 'presets', 'backups', 'uploads'];
 
 export function initStorage(dataDir, secrets = {}) {
@@ -177,7 +198,14 @@ export function saveSettings(settings) {
   let out = settings;
   if (SECRETS.encryptString) {
     const { apiKeys, apiKeysEncrypted, ...rest } = settings;
-    out = { ...rest, apiKeysEncrypted: SECRETS.encryptString(JSON.stringify(apiKeys ?? {})) };
+    // A surviving apiKeysEncrypted blob means loadSettings could not decrypt it
+    // (keychain locked/denied). With no decrypted keys in hand, re-encrypting
+    // would replace the user's stored keys with an empty map — keep the blob.
+    const blob =
+      apiKeysEncrypted && !Object.keys(apiKeys ?? {}).length
+        ? apiKeysEncrypted
+        : SECRETS.encryptString(JSON.stringify(apiKeys ?? {}));
+    out = { ...rest, apiKeysEncrypted: blob };
   }
   writeFileAtomic(settingsPath(), JSON.stringify(out, null, 2));
   return true;
@@ -314,9 +342,8 @@ function migrateChats(oldName, newName) {
   } catch {}
 }
 
-export function deleteCharacter(filename) {
-  const full = path.join(charactersDir(), sanitizeFilename(filename));
-  if (fs.existsSync(full)) fs.unlinkSync(full);
+export async function deleteCharacter(filename) {
+  await removeFile(path.join(charactersDir(), sanitizeFilename(filename)));
   // Keep chat history on disk: chats live in their own dirs, independent of the card
   return true;
 }
@@ -419,9 +446,8 @@ export function rewriteChat(characterName, file, metadata, messages) {
   return true;
 }
 
-export function deleteChat(characterName, file) {
-  const full = path.join(chatsDirFor(characterName), sanitizeFilename(file));
-  if (fs.existsSync(full)) fs.unlinkSync(full);
+export async function deleteChat(characterName, file) {
+  await removeFile(path.join(chatsDirFor(characterName), sanitizeFilename(file)));
   return true;
 }
 
@@ -503,8 +529,62 @@ export function exportChatMarkdown(characterName, file, destPath) {
 }
 
 export function exportChatJSONL(characterName, file, destPath) {
-  fs.copyFileSync(path.join(chatsDirFor(characterName), file), destPath);
+  fs.copyFileSync(path.join(chatsDirFor(characterName), sanitizeFilename(file)), destPath);
   return true;
+}
+
+/**
+ * Import a SillyTavern-format JSONL chat. Line 1 is the metadata header
+ * (headerless files — every line a message — are tolerated). Returns the new
+ * chat file name.
+ */
+export function importChatJSONL(characterName, sourcePath) {
+  const rawLines = fs
+    .readFileSync(sourcePath, 'utf8')
+    .split('\n')
+    .filter((l) => l.trim());
+  if (!rawLines.length) throw new Error('Chat file is empty');
+  const parsed = rawLines.map((line, i) => {
+    try {
+      return JSON.parse(line);
+    } catch {
+      throw new Error(`Not a JSONL chat: line ${i + 1} is not valid JSON`);
+    }
+  });
+  let header = parsed[0];
+  let messageLines = parsed.slice(1);
+  if (typeof header !== 'object' || header === null || header.mes !== undefined) {
+    messageLines = parsed;
+    header = {};
+  }
+  const messages = messageLines.map((m, i) => {
+    if (typeof m?.mes !== 'string') throw new Error(`Not a JSONL chat: line ${i + 2} has no message text`);
+    const out = {
+      name: m.name ?? (m.is_user ? header.user_name ?? 'User' : characterName),
+      is_user: !!m.is_user,
+      mes: m.mes,
+      send_date: m.send_date ?? '',
+    };
+    if (Array.isArray(m.swipes) && m.swipes.length) {
+      out.swipes = m.swipes.map(String);
+      out.swipe_id =
+        Number.isInteger(m.swipe_id) && m.swipe_id >= 0 && m.swipe_id < m.swipes.length ? m.swipe_id : 0;
+    }
+    if (m.extra && typeof m.extra === 'object') out.extra = m.extra;
+    return out;
+  });
+  const dir = chatsDirFor(characterName);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = `${sanitizeFilename(characterName)} - imported ${chatTimestamp()}-${crypto.randomUUID().slice(0, 8)}.jsonl`;
+  const metadata = {
+    user_name: header.user_name ?? 'User',
+    character_name: characterName,
+    create_date: header.create_date ?? new Date().toISOString(),
+    chat_metadata: header.chat_metadata ?? {},
+  };
+  const lines = [JSON.stringify(metadata), ...messages.map((m) => JSON.stringify(m))];
+  writeFileAtomic(path.join(dir, file), lines.join('\n') + '\n');
+  return file;
 }
 
 // ---------------------------------------------------------------------------
@@ -522,6 +602,7 @@ function normalizeWorldEntry(e) {
     content: e.content ?? '',
     comment: e.comment ?? '',
     constant: !!e.constant,
+    selective: !!e.selective,
     enabled: e.enabled ?? (e.disable !== undefined ? !e.disable : true),
     case_sensitive: !!(e.case_sensitive ?? e.caseSensitive),
     insertion_order: e.insertion_order ?? e.order ?? 100,
@@ -556,9 +637,32 @@ export function saveWorldInfo(book) {
   return { ...book, file };
 }
 
-export function deleteWorldInfo(file) {
-  const full = path.join(worldsDir(), sanitizeFilename(file));
-  if (fs.existsSync(full)) fs.unlinkSync(full);
+export async function deleteWorldInfo(file) {
+  await removeFile(path.join(worldsDir(), sanitizeFilename(file)));
+  return true;
+}
+
+/** Write a world book to destPath in SillyTavern world-info JSON format. */
+export function exportWorldInfo(file, destPath) {
+  const book = listWorldInfo().find((b) => b.file === sanitizeFilename(file));
+  if (!book) throw new Error(`World book not found: ${file}`);
+  const entries = {};
+  book.entries.forEach((e, i) => {
+    entries[i] = {
+      uid: i,
+      key: e.keys,
+      keysecondary: e.secondary_keys,
+      content: e.content,
+      comment: e.comment,
+      constant: e.constant,
+      disable: !e.enabled,
+      selective: !!e.selective,
+      caseSensitive: e.case_sensitive,
+      order: e.insertion_order,
+      position: e.position === 'after_char' || e.position === 1 ? 1 : 0,
+    };
+  });
+  fs.writeFileSync(destPath, JSON.stringify({ name: book.name, entries }, null, 2));
   return true;
 }
 
