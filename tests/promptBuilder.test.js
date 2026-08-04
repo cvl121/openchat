@@ -274,3 +274,69 @@ test('master prompt override + summary coexist in chat-mode shape', () => {
   assert.match(messages[1].content, /lighthouses/);
   assert.deepEqual(messages[2], { role: 'user', content: 'go on' });
 });
+
+test("author's note is injected at the requested depth", () => {
+  const history = ['one', 'two', 'three', 'four', 'five', 'six'].map((mes, i) => ({
+    is_user: i % 2 === 0,
+    mes,
+  }));
+  const messages = buildMessages({
+    character,
+    chatHistory: history,
+    userName: 'Bob',
+    authorsNote: 'Keep {{char}} mysterious.',
+    authorsNoteDepth: 2,
+  });
+  const noteIdx = messages.findIndex((m) => m.content === 'Keep Alice mysterious.');
+  assert.ok(noteIdx > 0, "author's note present");
+  assert.equal(messages[noteIdx].role, 'system');
+  // Exactly two history messages follow the note (before reminder/post-history)
+  const after = messages.slice(noteIdx + 1).filter((m) => m.role !== 'system');
+  assert.deepEqual(after.map((m) => m.content), ['five', 'six']);
+});
+
+test("author's note deeper than the history clamps to the top of history", () => {
+  const messages = buildMessages({
+    character: { ...character, post_history_instructions: '' },
+    chatHistory: [{ is_user: true, mes: 'only' }],
+    userName: 'Bob',
+    authorsNote: 'NOTE',
+    authorsNoteDepth: 10,
+  });
+  const noteIdx = messages.findIndex((m) => m.content === 'NOTE');
+  assert.equal(messages[noteIdx + 1].content, 'only');
+});
+
+test('selective world entries require both a primary and a secondary key', () => {
+  const entry = {
+    keys: ['dragon'],
+    secondary_keys: ['cave'],
+    selective: true,
+    content: 'The dragon sleeps in the cave.',
+    enabled: true,
+  };
+  const primaryOnly = buildMessages({
+    character,
+    chatHistory: [{ is_user: true, mes: 'I saw a dragon today' }],
+    userName: 'Bob',
+    worldInfoEntries: [entry],
+  });
+  assert.doesNotMatch(primaryOnly[0].content, /dragon sleeps/);
+
+  const both = buildMessages({
+    character,
+    chatHistory: [{ is_user: true, mes: 'A dragon flew into the cave' }],
+    userName: 'Bob',
+    worldInfoEntries: [entry],
+  });
+  assert.match(both[0].content, /dragon sleeps/);
+
+  // Non-selective entries ignore secondary keys entirely
+  const nonSelective = buildMessages({
+    character,
+    chatHistory: [{ is_user: true, mes: 'I saw a dragon today' }],
+    userName: 'Bob',
+    worldInfoEntries: [{ ...entry, selective: false }],
+  });
+  assert.match(nonSelective[0].content, /dragon sleeps/);
+});

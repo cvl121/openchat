@@ -735,3 +735,73 @@ input[type='checkbox'] {
 }
 .msg-attachment-frame:hover .img-save-btn { opacity: 1; }
 .image-viewer-box { text-align: center; }
+
+/* --------------------------------------------- Chat tools & onboarding */
+
+.btn-icon.active {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  outline: 1.5px solid var(--accent);
+  border-radius: 8px;
+}
+
+/* Onboarding wizard provider choices (buttons styled as list rows) */
+.onboarding-provider {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.onboarding-provider:hover { border-color: var(--accent); background: var(--bg-hover); }
+
+/* Message actions stay reachable by keyboard, not just hover */
+.msg-actions button:focus-visible { opacity: 1; }
+.msg:focus-within .msg-actions { opacity: 1; }
+
+/* --------------------------- Markdown upgrades: links, tables, code blocks */
+
+:root { --tok-comment: #6f7487; --tok-string: #93c584; --tok-number: #d8a05f; --tok-keyword: #8d80e5; }
+[data-theme='light'] { --tok-comment: #8a8a96; --tok-string: #3e7d3e; --tok-number: #a15c0d; --tok-keyword: #5a4bbf; }
+
+.md-link { color: var(--accent-hover); text-decoration: none; }
+.md-link:hover { text-decoration: underline; }
+
+.md-table-wrap { overflow-x: auto; margin: 6px 0; }
+.md-table { border-collapse: collapse; font-size: 0.95em; }
+.md-table th, .md-table td { border: 1px solid var(--border); padding: 5px 10px; text-align: left; }
+.md-table th { background: var(--bg-raised); font-weight: 600; }
+.md-table .md-center { text-align: center; }
+.md-table .md-right { text-align: right; }
+
+.msg-content .md-code {
+  margin: 8px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.md-code-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 3px 8px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+}
+.md-code-lang { font-size: 11px; color: var(--text-faint); text-transform: lowercase; }
+.md-code-copy {
+  border: none; background: none;
+  color: var(--text-dim);
+  font-size: 11px; cursor: pointer;
+  padding: 2px 6px; border-radius: 4px;
+}
+.md-code-copy:hover { background: var(--bg-hover); color: var(--text); }
+.md-code-copy.copied { color: var(--ok); }
+.msg-content .md-code pre { margin: 0; border-radius: 0; }
+
+.tok-comment { color: var(--tok-comment); font-style: italic; }
+.tok-string { color: var(--tok-string); }
+.tok-number { color: var(--tok-number); }
+.tok-keyword { color: var(--tok-keyword); }

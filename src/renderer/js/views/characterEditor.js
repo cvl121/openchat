@@ -2,9 +2,10 @@
 // less common ones (system prompt, post-history, example dialogue, book)
 // shown only in Advanced mode.
 
-import { el, toast, modal } from '../util.js';
+import { el, clear, toast, modal } from '../util.js';
 import { state, isAdvanced } from '../state.js';
 import { textRow, textareaRow } from '../components.js';
+import { loreEntryCard, newLoreEntry } from './worldinfo.js';
 
 let cb = {}; // { reloadCharacters, selectCharacter }
 
@@ -94,19 +95,72 @@ export function openCharacterEditor(character) {
         rows: 5,
       }),
       textRow('Creator', { get: () => draft.creator, set: (v) => (draft.creator = v) }),
-      textareaRow('Creator Notes', { get: () => draft.creator_notes, set: (v) => (draft.creator_notes = v), rows: 2 })
+      textareaRow('Creator Notes', { get: () => draft.creator_notes, set: (v) => (draft.creator_notes = v), rows: 2 }),
+      textRow('Version', { get: () => draft.character_version, set: (v) => (draft.character_version = v), placeholder: 'e.g. 1.0' })
     );
-    if (draft.character_book?.entries?.length) {
-      content.append(
-        el('div', { class: 'hint' }, `This character has an embedded lore book with ${draft.character_book.entries.length} entries (kept on save).`)
+
+    const bookSection = el('div', {});
+    const renderBook = () => {
+      clear(bookSection);
+      const entries = draft.character_book?.entries ?? [];
+      bookSection.append(
+        el('h3', { style: { margin: '18px 0 10px', fontSize: '12px', color: 'var(--text-dim)', textTransform: 'uppercase' } },
+          `Embedded Lore Book${entries.length ? ` (${entries.length})` : ''}`),
+        el('p', { class: 'hint', style: { marginBottom: '10px' } },
+          'Lore entries travel inside the card and are injected when their keywords appear in recent messages.')
       );
-    }
+      entries.forEach((entry, index) => {
+        bookSection.append(
+          loreEntryCard(entry, () => {
+            entries.splice(index, 1);
+            renderBook();
+          })
+        );
+      });
+      bookSection.append(
+        el('button', {
+          class: 'btn',
+          onclick: () => {
+            draft.character_book ??= { entries: [] };
+            draft.character_book.entries ??= [];
+            draft.character_book.entries.push(newLoreEntry());
+            renderBook();
+          },
+        }, '+ Add Lore Entry')
+      );
+    };
+    renderBook();
+    content.append(bookSection);
   }
+
+  const doExport = async (format) => {
+    try {
+      const saved = await window.tavern.characters.export(character.filename, format);
+      if (saved) toast('Character exported', 'ok');
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  };
 
   content.append(
     el(
       'div',
       { class: 'modal-actions' },
+      character
+        ? el('button', {
+            class: 'btn',
+            style: { marginRight: 'auto' },
+            title: 'Export the last saved version as a PNG card',
+            onclick: () => doExport('png'),
+          }, 'Export PNG…')
+        : null,
+      character
+        ? el('button', {
+            class: 'btn',
+            title: 'Export the last saved version as JSON',
+            onclick: () => doExport('json'),
+          }, 'Export JSON…')
+        : null,
       el('button', { class: 'btn', onclick: () => overlay.close() }, 'Cancel'),
       el(
         'button',
@@ -118,6 +172,7 @@ export function openCharacterEditor(character) {
               return;
             }
             try {
+              if (draft.character_book && !draft.character_book.entries?.length) draft.character_book = null;
               const card = { spec: 'chara_card_v2', spec_version: '2.0', data: draft };
               const saved = await window.tavern.characters.save(card, {
                 filename: character?.filename,

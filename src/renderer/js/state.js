@@ -8,7 +8,11 @@ export const PROVIDERS = {
   openai: { label: 'OpenAI', requiresKey: true, defaultModel: 'gpt-4o-mini', keyURL: 'https://platform.openai.com/api-keys' },
   claude: { label: 'Anthropic Claude', requiresKey: true, defaultModel: 'claude-sonnet-4-6', keyURL: 'https://console.anthropic.com/' },
   gemini: { label: 'Google Gemini', requiresKey: true, defaultModel: 'gemini-3.1-pro-preview', keyURL: 'https://aistudio.google.com/apikey' },
+  deepseek: { label: 'DeepSeek', requiresKey: true, defaultModel: 'deepseek-chat', keyURL: 'https://platform.deepseek.com/api_keys' },
+  kimi: { label: 'Kimi (Moonshot AI)', requiresKey: true, defaultModel: 'kimi-latest', keyURL: 'https://platform.moonshot.ai/console/api-keys' },
+  qwen: { label: 'Qwen (Alibaba)', requiresKey: true, defaultModel: 'qwen-plus', keyURL: 'https://modelstudio.console.alibabacloud.com/#/api-key' },
   ollama: { label: 'Ollama (local)', requiresKey: false, defaultModel: 'llama3.1', keyURL: 'https://ollama.ai' },
+  custom: { label: 'Custom (OpenAI-compatible)', requiresKey: false, requiresBaseURL: true, defaultModel: '', keyURL: null },
 };
 
 // Chat mode talks to a built-in virtual assistant instead of a character

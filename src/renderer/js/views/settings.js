@@ -125,11 +125,31 @@ function renderAPI() {
   );
 
   const provider = PROVIDERS[s.activeAPI];
-  if (provider.requiresKey) {
+
+  // Custom OpenAI-compatible server: the base URL is the whole point, so it
+  // lives here (not behind Advanced mode) and the key is optional.
+  if (provider.requiresBaseURL) {
+    const urlRow = textRow('Server URL', {
+      get: () => s.baseURLs?.[s.activeAPI] ?? '',
+      set: (v) => {
+        s.baseURLs = s.baseURLs ?? {};
+        if (v.trim()) s.baseURLs[s.activeAPI] = v.trim();
+        else delete s.baseURLs[s.activeAPI];
+        scheduleSettingsSave();
+      },
+      placeholder: 'http://localhost:1234/v1',
+      hint: 'Any OpenAI-compatible endpoint: LM Studio, vLLM, llama.cpp, Groq, Together, DeepSeek, Mistral, …',
+    });
+    // Once the URL is committed, re-render so the model list loads from it
+    urlRow.querySelector('input').addEventListener('change', () => renderSettings());
+    root.append(urlRow);
+  }
+
+  if (provider.requiresKey || provider.requiresBaseURL) {
     const keyInput = el('input', {
       type: 'password',
       value: s.apiKeys[s.activeAPI] ?? '',
-      placeholder: `${provider.label} API key`,
+      placeholder: provider.requiresKey ? `${provider.label} API key` : 'API key (if your server needs one)',
     });
     keyInput.addEventListener('input', () => {
       s.apiKeys[s.activeAPI] = keyInput.value.trim();
@@ -147,22 +167,24 @@ function renderAPI() {
       el(
         'div',
         { class: 'form-row' },
-        el('label', {}, 'API Key'),
+        el('label', {}, provider.requiresKey ? 'API Key' : 'API Key (optional)'),
         el('div', { class: 'form-inline' }, keyInput, toggle),
-        el('div', { class: 'hint' },
-          'Stored locally, only sent to the provider. Get a key: ',
-          el('a', {
-            href: '#',
-            style: { color: 'var(--accent)' },
-            onclick: (e) => {
-              e.preventDefault();
-              window.tavern.misc.openExternal(provider.keyURL);
-            },
-          }, provider.keyURL)
-        )
+        provider.keyURL
+          ? el('div', { class: 'hint' },
+              'Stored locally, only sent to the provider. Get a key: ',
+              el('a', {
+                href: '#',
+                style: { color: 'var(--accent)' },
+                onclick: (e) => {
+                  e.preventDefault();
+                  window.tavern.misc.openExternal(provider.keyURL);
+                },
+              }, provider.keyURL)
+            )
+          : el('div', { class: 'hint' }, 'Stored locally, only sent to your server.')
       )
     );
-  } else {
+  } else if (s.activeAPI === 'ollama') {
     root.append(el('p', { class: 'hint', style: { marginBottom: '12px' } }, 'Ollama runs locally — no API key needed. Make sure `ollama serve` is running.'));
   }
 
@@ -186,8 +208,10 @@ function renderAPI() {
       const models = await fetchModels(apiConfig(), { force });
       fillModelDatalist(datalist, models);
       modelHint.textContent = `${models.length} models available — type to search.`;
+      modelHint.style.color = '';
     } catch (err) {
       modelHint.textContent = `Could not load models: ${err.message}`;
+      modelHint.style.color = 'var(--danger)';
     }
   };
   refreshBtn.addEventListener('click', async () => {
@@ -197,11 +221,16 @@ function renderAPI() {
     refreshBtn.disabled = false;
     refreshBtn.textContent = 'Refresh List';
   });
-  if (!provider.requiresKey || s.apiKeys[s.activeAPI]) {
+  const canListModels = provider.requiresBaseURL
+    ? !!s.baseURLs?.[s.activeAPI]
+    : !provider.requiresKey || s.apiKeys[s.activeAPI];
+  if (canListModels) {
     modelHint.textContent = 'Loading model list…';
     loadMainModels(false);
   } else {
-    modelHint.textContent = 'Enter an API key to load the model list.';
+    modelHint.textContent = provider.requiresBaseURL
+      ? 'Enter your server URL to load the model list.'
+      : 'Enter an API key to load the model list.';
   }
   root.append(
     el('div', { class: 'form-row' },
@@ -243,7 +272,7 @@ function renderAPI() {
     );
   }
 
-  if (isAdvanced()) {
+  if (isAdvanced() && !provider.requiresBaseURL) {
     root.append(
       textRow('Base URL Override', {
         get: () => s.baseURLs?.[s.activeAPI] ?? '',

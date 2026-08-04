@@ -10,10 +10,17 @@ import { isImagePlaceholder } from './imageFlow.js';
 function keywordMatches(entry, recentText) {
   const caseSensitive = entry.case_sensitive ?? false;
   const haystack = caseSensitive ? recentText : recentText.toLowerCase();
-  return (entry.keys ?? []).some((key) => {
+  const hit = (key) => {
     const needle = caseSensitive ? key : key.toLowerCase();
     return needle && haystack.includes(needle);
-  });
+  };
+  if (!(entry.keys ?? []).some(hit)) return false;
+  // Selective entries (SillyTavern) additionally require a secondary keyword
+  const secondary = entry.secondary_keys ?? entry.keysecondary ?? [];
+  if (entry.selective && secondary.length) {
+    return secondary.some(hit);
+  }
+  return true;
 }
 
 /**
@@ -31,6 +38,8 @@ export function buildMessages({
   worldInfoEntries = [],
   persona = null,
   reminderPrompt = '',
+  authorsNote = '', // per-chat note injected `authorsNoteDepth` messages from the end
+  authorsNoteDepth = 4,
   summary = '', // compressed earlier conversation (chatHistory should already exclude it)
   contextSize = 0, // 0 = no trimming
   maxResponseTokens = 0,
@@ -137,12 +146,14 @@ export function buildMessages({
     }
   }
   const reminder = reminderPrompt ? vars(reminderPrompt) : '';
+  const note = authorsNote ? vars(authorsNote) : '';
   const postInstructions = vars(character.post_history_instructions);
   let trimmedCount = 0;
   if (contextSize > 0) {
     const fixedTokens =
       messages.reduce((sum, m) => sum + estimateTokens(m.content), 0) +
       estimateTokens(reminder) +
+      estimateTokens(note) +
       estimateTokens(postInstructions);
     let budget = contextSize - maxResponseTokens - fixedTokens;
     const kept = [];
@@ -156,6 +167,12 @@ export function buildMessages({
     history = kept;
   }
   messages.push(...history);
+
+  // 11b. Author's note: injected N messages from the end (SillyTavern convention)
+  if (note) {
+    const depth = Math.max(0, Math.min(authorsNoteDepth ?? 4, history.length));
+    messages.splice(messages.length - depth, 0, { role: 'system', content: note });
+  }
 
   // 12. Reminder prompt near the end (reinforces style in long chats)
   if (reminder) {

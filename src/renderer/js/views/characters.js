@@ -67,15 +67,38 @@ function renderGrid(grid, query) {
       el('div', { class: 'char-name' }, data.name),
       el('div', { class: 'char-tags' }, (data.tags ?? []).slice(0, 3).join(' · ')),
       el(
-        'button',
-        {
-          class: 'btn btn-small',
-          onclick: (e) => {
-            e.stopPropagation();
-            cb.editCharacter?.(character);
+        'div',
+        { style: { display: 'flex', gap: '6px', justifyContent: 'center' } },
+        el(
+          'button',
+          {
+            class: 'btn btn-small',
+            'aria-label': `Edit ${data.name}`,
+            onclick: (e) => {
+              e.stopPropagation();
+              cb.editCharacter?.(character);
+            },
           },
-        },
-        'Edit'
+          'Edit'
+        ),
+        el(
+          'button',
+          {
+            class: 'btn btn-small',
+            title: 'Export as PNG card',
+            'aria-label': `Export ${data.name} as PNG card`,
+            onclick: async (e) => {
+              e.stopPropagation();
+              try {
+                const saved = await window.tavern.characters.export(character.filename, 'png');
+                if (saved) toast('Character exported', 'ok');
+              } catch (err) {
+                toast(err.message, 'error');
+              }
+            },
+          },
+          'Export'
+        )
       )
     );
     grid.append(card);

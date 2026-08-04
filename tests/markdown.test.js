@@ -63,3 +63,86 @@ test('paragraphs and line breaks', () => {
   assert.match(html, /<p>line one<br>line two<\/p>/);
   assert.match(html, /<p>new paragraph<\/p>/);
 });
+
+test('markdown links render as anchors, http(s) only', () => {
+  const html = renderMarkdown('See [the docs](https://example.com/docs) here');
+  assert.match(html, /<a class='md-link' href='https:\/\/example\.com\/docs'>the docs<\/a>/);
+  // Non-http schemes stay literal text
+  const bad = renderMarkdown('[click](javascript:alert(1))');
+  assert.doesNotMatch(bad, /<a /);
+});
+
+test('bare URLs autolink and keep query entities escaped', () => {
+  const html = renderMarkdown('visit https://example.com/a?b=1&c=2 today');
+  assert.match(html, /<a class='md-link' href='https:\/\/example\.com\/a\?b=1&amp;c=2'>/);
+  // Trailing punctuation is not part of the link
+  const trail = renderMarkdown('go to https://example.com.');
+  assert.match(trail, /href='https:\/\/example\.com'/);
+  assert.doesNotMatch(trail, /href='https:\/\/example\.com\.'/);
+});
+
+test('links cannot break out of the href attribute', () => {
+  const html = renderMarkdown("[x](https://e.com/'onclick='alert(1))");
+  assert.doesNotMatch(html, /onclick='alert/);
+  assert.match(html, /&#39;onclick=&#39;/);
+});
+
+test('strikethrough', () => {
+  assert.match(renderMarkdown('~~gone~~'), /<s>gone<\/s>/);
+});
+
+test('pipe tables render with scroll wrapper and alignment classes', () => {
+  const html = renderMarkdown('| Name | Score |\n|:---|---:|\n| Ann | 3 |\n| Bo | 12 |');
+  assert.match(html, /<div class='md-table-wrap'><table class='md-table'>/);
+  assert.match(html, /<th>Name<\/th><th class='md-right'>Score<\/th>/);
+  assert.match(html, /<td>Ann<\/td><td class='md-right'>3<\/td>/);
+  assert.match(html, /<td>Bo<\/td>/);
+});
+
+test('lines with pipes but no separator are not tables', () => {
+  const html = renderMarkdown('either | or');
+  assert.doesNotMatch(html, /<table/);
+  assert.match(html, /<p>either \| or<\/p>/);
+});
+
+test('nested lists indent into nested elements', () => {
+  const html = renderMarkdown('- top\n  - inner\n- top2');
+  assert.match(html, /<ul>\n<li>top<\/li>\n<ul>\n<li>inner<\/li>\n<\/ul>\n<li>top2<\/li>\n<\/ul>/);
+});
+
+test('fenced code with language gets highlighting and language class', () => {
+  const html = renderMarkdown('```js\nconst x = 42 // answer\n```');
+  assert.match(html, /<code class='md-lang-javascript'>/);
+  assert.match(html, /<span class='tok-keyword'>const<\/span>/);
+  assert.match(html, /<span class='tok-number'>42<\/span>/);
+  assert.match(html, /<span class='tok-comment'>\/\/ answer<\/span>/);
+});
+
+test('python and json highlighting', () => {
+  const py = renderMarkdown('```python\ndef f():\n    return None  # noop\n```');
+  assert.match(py, /<span class='tok-keyword'>def<\/span>/);
+  assert.match(py, /<span class='tok-comment'># noop<\/span>/);
+  const json = renderMarkdown('```json\n{"a": true, "n": 1.5}\n```');
+  assert.match(json, /<span class='tok-string'>"a"<\/span>/);
+  assert.match(json, /<span class='tok-keyword'>true<\/span>/);
+});
+
+test('highlighting is XSS-safe', () => {
+  const html = renderMarkdown('```html\n<img src=x onerror=alert(1)>\n```');
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /&lt;img/);
+  const js = renderMarkdown('```js\nconst s = "</code><img src=x onerror=alert(1)>"\n```');
+  assert.doesNotMatch(js, /<img/);
+});
+
+test('unknown languages fall back to escaped plain text', () => {
+  const html = renderMarkdown('```brainfuck\n<+++>\n```');
+  assert.match(html, /&lt;\+\+\+&gt;/);
+  assert.doesNotMatch(html, /tok-/);
+});
+
+test('code blocks carry a copy button', () => {
+  const html = renderMarkdown('```\nhello\n```');
+  assert.match(html, /<button class='md-code-copy' type='button' aria-label='Copy code'>Copy<\/button>/);
+  assert.match(html, /<span class='md-code-lang'><\/span>/);
+});

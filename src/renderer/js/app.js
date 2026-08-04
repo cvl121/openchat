@@ -1,8 +1,8 @@
 // App bootstrap: loads data, wires views together, applies appearance,
 // handles routing, keyboard shortcuts, menu events, and first-run onboarding.
 
-import { el, modal, toast } from './util.js';
-import { state, loadAll, scheduleSettingsSave, saveSettingsSync, isChatMode } from './state.js';
+import { el, clear, modal, toast } from './util.js';
+import { state, loadAll, scheduleSettingsSave, saveSettingsNow, saveSettingsSync, isChatMode, PROVIDERS } from './state.js';
 import { initSidebar, renderSidebar, toggleSidebar } from './views/sidebar.js';
 import {
   initChat,
@@ -105,38 +105,146 @@ async function reloadAll() {
   renderSidebar();
 }
 
+/**
+ * First-run wizard: pick a provider, paste a key (or point at a server),
+ * test, done — without a detour through the full Settings page.
+ */
 function showOnboarding() {
-  const content = el(
-    'div',
-    {},
-    el('h2', {}, 'Welcome to OpenChat 🍻'),
-    el('p', { style: { lineHeight: 1.6, marginBottom: '12px' } },
-      'A fast, local-first AI chat app. Your conversations and settings live on your machine.'),
-    el('p', { style: { lineHeight: 1.6, marginBottom: '12px' } },
-      'OpenChat is bring-your-own-key: add an API key in Settings to start chatting (or use a local Ollama model, no key needed). ',
-      el('strong', {}, 'OpenRouter'),
-      ' is the recommended starting point — one key unlocks hundreds of models.'),
-    el('ul', { style: { lineHeight: 1.8, paddingLeft: '20px', marginBottom: '14px', color: 'var(--text-dim)' } },
-      el('li', {}, 'Chat mode (default): a clean assistant chat with file and image attachments'),
-      el('li', {}, 'Story mode: role-play with character cards, personas, world lore, and swipes — switch in Settings → General'),
-      el('li', {}, 'Streaming responses from OpenRouter, OpenAI, Claude, Gemini, or local Ollama'),
-      el('li', {}, 'Regular mode keeps it simple; Advanced mode unlocks full sampler control')),
-    el('div', { class: 'modal-actions' },
-      el('button', {
-        class: 'btn btn-primary',
-        onclick: () => {
-          overlay.close();
-          navigate('settings');
-        },
-      }, 'Set Up API Key'))
-  );
-  const overlay = modal(content, {
-    width: 520,
+  const s = state.settings;
+  const body = el('div', {});
+  const overlay = modal(el('div', {}, el('h2', {}, 'Welcome to OpenChat 🍻'), body), {
+    width: 540,
     onClose: () => {
-      state.settings.onboardingComplete = true;
+      s.onboardingComplete = true;
       scheduleSettingsSave();
     },
   });
+
+  const PROVIDER_BLURBS = {
+    openrouter: 'Recommended — one key unlocks hundreds of models.',
+    openai: 'GPT models with an OpenAI platform key.',
+    claude: 'Claude models with an Anthropic key.',
+    gemini: 'Gemini models with a Google AI Studio key.',
+    deepseek: 'DeepSeek V3 and R1 reasoning models — inexpensive and capable.',
+    kimi: 'Kimi K2 models from Moonshot AI.',
+    qwen: 'Qwen models via Alibaba Cloud Model Studio.',
+    ollama: 'Run local models — no key, free, private.',
+    custom: 'Any OpenAI-compatible server (LM Studio, vLLM, Groq, Together…).',
+  };
+
+  function stepProvider() {
+    clear(body);
+    body.append(
+      el('p', { style: { lineHeight: 1.6, marginBottom: '12px' } },
+        'A fast, local-first AI chat app — your conversations, characters, and keys stay on your machine. Pick how you want to connect:'),
+      ...Object.entries(PROVIDERS).map(([id, p]) =>
+        el(
+          'button',
+          { class: 'onboarding-provider list-row', onclick: () => stepConnect(id) },
+          el('div', { class: 'list-main' },
+            el('div', { class: 'list-title' }, p.label, id === 'openrouter' ? ' ⭐' : ''),
+            el('div', { class: 'list-sub' }, PROVIDER_BLURBS[id] ?? ''))
+        )
+      ),
+      el('div', { class: 'modal-actions' },
+        el('button', { class: 'btn', onclick: () => overlay.close() }, 'Skip for now'))
+    );
+  }
+
+  function stepConnect(providerId) {
+    clear(body);
+    const provider = PROVIDERS[providerId];
+    const keyInput = el('input', {
+      type: 'password',
+      placeholder: `${provider.label} API key${provider.requiresKey ? '' : ' (optional)'}`,
+    });
+    const urlInput = el('input', { type: 'text', placeholder: 'http://localhost:1234/v1' });
+    const status = el('p', { class: 'hint', style: { minHeight: '18px', marginTop: '10px' } });
+
+    body.append(el('p', { style: { lineHeight: 1.6, marginBottom: '12px' } }, el('strong', {}, provider.label)));
+    if (provider.requiresBaseURL) {
+      body.append(el('div', { class: 'form-row' }, el('label', {}, 'Server URL'), urlInput));
+    }
+    if (providerId === 'ollama') {
+      body.append(el('p', { class: 'hint', style: { marginBottom: '10px' } },
+        'No key needed. Make sure Ollama is installed and `ollama serve` is running, then hit Test.'));
+    } else {
+      body.append(
+        el('div', { class: 'form-row' },
+          el('label', {}, provider.requiresKey ? 'API Key' : 'API Key (optional)'),
+          keyInput,
+          provider.keyURL
+            ? el('div', { class: 'hint' },
+                'Get one at ',
+                el('a', {
+                  href: '#',
+                  style: { color: 'var(--accent)' },
+                  onclick: (e) => {
+                    e.preventDefault();
+                    window.tavern.misc.openExternal(provider.keyURL);
+                  },
+                }, provider.keyURL))
+            : null)
+      );
+    }
+    body.append(status);
+
+    const apply = () => {
+      s.activeAPI = providerId;
+      if (keyInput.value.trim()) s.apiKeys[providerId] = keyInput.value.trim();
+      if (provider.requiresBaseURL && urlInput.value.trim()) {
+        s.baseURLs = s.baseURLs ?? {};
+        s.baseURLs[providerId] = urlInput.value.trim();
+      }
+    };
+    const finish = () => {
+      overlay.close();
+      toast('You’re set — say hi!', 'ok');
+    };
+    body.append(
+      el('div', { class: 'modal-actions' },
+        el('button', { class: 'btn', onclick: () => stepProvider() }, 'Back'),
+        el('button', {
+          class: 'btn btn-primary',
+          onclick: async (e) => {
+            const btn = e.currentTarget;
+            apply();
+            await saveSettingsNow();
+            btn.disabled = true;
+            status.textContent = 'Testing connection…';
+            try {
+              const config = {
+                provider: providerId,
+                apiKey: s.apiKeys[providerId] ?? '',
+                baseURL: s.baseURLs?.[providerId] ?? '',
+                model: s.models?.[providerId] || provider.defaultModel,
+                params: { ...s.generationParams },
+              };
+              // A custom server has no default model — grab its first one
+              if (!config.model) {
+                const models = await window.tavern.llm.models(config).catch(() => []);
+                if (models[0]) {
+                  config.model = models[0].id;
+                  s.models = s.models ?? {};
+                  s.models[providerId] = models[0].id;
+                  scheduleSettingsSave();
+                }
+              }
+              const result = await window.tavern.llm.test(config);
+              status.textContent = `✓ Connected (${result.latencyMs}ms)`;
+              setTimeout(finish, 600);
+            } catch (err) {
+              status.textContent = `✗ ${err.message}`;
+              btn.disabled = false;
+            }
+          },
+        }, 'Test & Finish'),
+        el('button', { class: 'btn', onclick: () => { apply(); saveSettingsNow(); finish(); } }, 'Finish'))
+    );
+    (provider.requiresBaseURL ? urlInput : keyInput).focus();
+  }
+
+  stepProvider();
 }
 
 function bindShortcuts() {

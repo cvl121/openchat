@@ -92,7 +92,22 @@ export function renderWorldInfo() {
         ),
         el('button', {
           class: 'btn-icon',
+          title: 'Export book',
+          'aria-label': `Export world book ${book.name}`,
+          onclick: async (e) => {
+            e.stopPropagation();
+            try {
+              const saved = await window.tavern.worlds.export(book.file);
+              if (saved) toast('World book exported', 'ok');
+            } catch (err) {
+              toast(err.message, 'error');
+            }
+          },
+        }, '⬇'),
+        el('button', {
+          class: 'btn-icon',
           title: 'Delete book',
+          'aria-label': `Delete world book ${book.name}`,
           onclick: async (e) => {
             e.stopPropagation();
             const ok = await confirmDialog(`Delete world book "${book.name}"?`);
@@ -148,27 +163,10 @@ function openBookEditor(book) {
     content.append(el('h3', { style: { margin: '14px 0 8px' } }, `Entries (${draft.entries.length})`));
     draft.entries.forEach((entry, index) => {
       content.append(
-        el('div', { class: 'card' },
-          textRow('Keywords (comma-separated)', {
-            get: () => (entry.keys ?? []).join(', '),
-            set: (v) => (entry.keys = v.split(',').map((k) => k.trim()).filter(Boolean)),
-          }),
-          textareaRow('Content', { get: () => entry.content, set: (v) => (entry.content = v), rows: 3 }),
-          el('div', { style: { display: 'flex', gap: '16px', alignItems: 'center' } },
-            inlineCheck('Constant (always included)', () => !!entry.constant, (v) => (entry.constant = v)),
-            inlineCheck('Enabled', () => entry.enabled !== false, (v) => (entry.enabled = v)),
-            inlineCheck('Case sensitive', () => !!entry.case_sensitive, (v) => (entry.case_sensitive = v)),
-            el('button', {
-              class: 'btn-icon',
-              style: { marginLeft: 'auto' },
-              title: 'Delete entry',
-              onclick: () => {
-                draft.entries.splice(index, 1);
-                rerender();
-              },
-            }, '🗑')
-          )
-        )
+        loreEntryCard(entry, () => {
+          draft.entries.splice(index, 1);
+          rerender();
+        })
       );
     });
 
@@ -176,7 +174,7 @@ function openBookEditor(book) {
       el('button', {
         class: 'btn',
         onclick: () => {
-          draft.entries.push({ keys: [], content: '', constant: false, enabled: true, case_sensitive: false, insertion_order: 100 });
+          draft.entries.push(newLoreEntry());
           rerender();
         },
       }, '+ Add Entry'),
@@ -205,4 +203,60 @@ function inlineCheck(label, get, set) {
   box.checked = get();
   box.addEventListener('change', () => set(box.checked));
   return el('label', { class: 'form-inline', style: { cursor: 'pointer', fontSize: '12px' } }, box, label);
+}
+
+export function newLoreEntry() {
+  return {
+    keys: [],
+    secondary_keys: [],
+    selective: false,
+    content: '',
+    constant: false,
+    enabled: true,
+    case_sensitive: false,
+    insertion_order: 100,
+  };
+}
+
+/** One editable lore entry card — shared by world books and embedded character books. */
+export function loreEntryCard(entry, onDelete) {
+  const selective = inlineCheck('Require a secondary keyword too', () => !!entry.selective, (v) => (entry.selective = v));
+  const syncSelective = () => (selective.style.display = entry.secondary_keys?.length ? '' : 'none');
+  syncSelective();
+
+  const orderInput = el('input', { type: 'number', value: String(entry.insertion_order ?? 100), style: { width: '70px' } });
+  orderInput.addEventListener('change', () => (entry.insertion_order = parseInt(orderInput.value, 10) || 0));
+
+  return el('div', { class: 'card' },
+    textRow('Keywords (comma-separated)', {
+      get: () => (entry.keys ?? []).join(', '),
+      set: (v) => (entry.keys = v.split(',').map((k) => k.trim()).filter(Boolean)),
+    }),
+    textRow('Secondary Keywords (optional, comma-separated)', {
+      get: () => (entry.secondary_keys ?? []).join(', '),
+      set: (v) => {
+        entry.secondary_keys = v.split(',').map((k) => k.trim()).filter(Boolean);
+        syncSelective();
+      },
+    }),
+    textareaRow('Content', { get: () => entry.content, set: (v) => (entry.content = v), rows: 3 }),
+    el('div', { style: { display: 'flex', gap: '16px', alignItems: 'center', flexWrap: 'wrap' } },
+      inlineCheck('Constant (always included)', () => !!entry.constant, (v) => (entry.constant = v)),
+      inlineCheck('Enabled', () => entry.enabled !== false, (v) => (entry.enabled = v)),
+      inlineCheck('Case sensitive', () => !!entry.case_sensitive, (v) => (entry.case_sensitive = v)),
+      selective,
+      el('label', {
+        class: 'form-inline',
+        style: { fontSize: '12px' },
+        title: 'Insertion order — lower numbers are inserted earlier in the prompt',
+      }, 'Order', orderInput),
+      el('button', {
+        class: 'btn-icon',
+        style: { marginLeft: 'auto' },
+        title: 'Delete entry',
+        'aria-label': 'Delete entry',
+        onclick: onDelete,
+      }, '🗑')
+    )
+  );
 }

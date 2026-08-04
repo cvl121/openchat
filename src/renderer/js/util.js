@@ -105,24 +105,49 @@ export function toast(message, kind = 'info') {
   toastTimer = setTimeout(() => node.classList.remove('visible'), 3200);
 }
 
+const FOCUSABLE = 'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
+
 /** Modal helper: returns the overlay element; close via overlay.remove(). */
 export function modal(contentNode, { width = 520, onClose } = {}) {
   const overlay = el('div', { class: 'modal-overlay' });
-  const box = el('div', { class: 'modal-box', style: { maxWidth: `${width}px` } }, contentNode);
+  const box = el(
+    'div',
+    { class: 'modal-box', role: 'dialog', 'aria-modal': 'true', tabindex: '-1', style: { maxWidth: `${width}px` } },
+    contentNode
+  );
   overlay.append(box);
+  const prevFocus = document.activeElement;
   const close = () => {
     overlay.remove();
-    document.removeEventListener('keydown', escHandler);
+    document.removeEventListener('keydown', keyHandler);
+    if (prevFocus instanceof HTMLElement && document.contains(prevFocus)) prevFocus.focus();
     onClose?.();
   };
-  const escHandler = (e) => {
-    if (e.key === 'Escape') close();
+  const keyHandler = (e) => {
+    if (e.key === 'Escape') {
+      close();
+      return;
+    }
+    // Keep Tab focus inside the dialog
+    if (e.key !== 'Tab' || !document.contains(box)) return;
+    const focusables = box.querySelectorAll(FOCUSABLE);
+    if (!focusables.length) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (e.shiftKey && (document.activeElement === first || document.activeElement === box)) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
   };
   overlay.addEventListener('mousedown', (e) => {
     if (e.target === overlay) close();
   });
-  document.addEventListener('keydown', escHandler);
+  document.addEventListener('keydown', keyHandler);
   document.body.append(overlay);
+  if (!box.contains(document.activeElement)) box.focus();
   overlay.close = close;
   return overlay;
 }
