@@ -12,7 +12,7 @@
     "dist": "electron-builder --mac",
     "dist:all": "electron-builder --mac --win --linux"
   },
-  "license": "GPL-3.0-only",
+  "license": "AGPL-3.0-only",
   "devDependencies": {
     "electron": "^43.1.1",
     "electron-builder": "^26.15.3"
