@@ -1,0 +1,85 @@
+name: Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Existing release tag to attach installers to (empty = build only)'
+        required: false
+        default: ''
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            args: --mac --arm64 --x64
+          - os: windows-latest
+            args: --win
+          - os: ubuntu-latest
+            args: --linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+
+      - name: Build (macOS, signed + notarized)
+        if: runner.os == 'macOS'
+        run: npx electron-builder ${{ matrix.args }} --publish never
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: npx electron-builder ${{ matrix.args }} --publish never
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: npx electron-builder ${{ matrix.args }} --publish never
+
+      # Best-effort: artifact storage is quota-limited on private repos, and a
+      # full quota must not block attaching installers to the release below.
+      - uses: actions/upload-artifact@v7
+        continue-on-error: true
+        with:
+          name: openchat-${{ matrix.os }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.exe
+            dist/*.AppImage
+            dist/*.deb
+
+      # On version tags (v1.0.0, v1.1.0, ...) — or a manual dispatch naming a
+      # release tag — attach the installers to a GitHub Release so users can
+      # download them from the Releases page.
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/') || inputs.release_tag != ''
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.release_tag || '' }}
+          files: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.exe
+            dist/*.AppImage
+            dist/*.deb

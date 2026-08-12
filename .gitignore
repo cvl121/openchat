@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.DS_Store
+npm-debug.log*
+# Local agent/editor config — may contain machine-local paths or credentials
+.claude/

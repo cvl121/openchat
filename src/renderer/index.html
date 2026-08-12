@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'none'; script-src 'self'; style-src 'self'; img-src tavern: data:; font-src 'self'"
+  />
+  <title>OpenChat</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="titlebar"></div>
+  <div id="app">
+    <aside id="sidebar">
+      <div id="sidebar-search"></div>
+      <div id="sidebar-list"></div>
+      <nav id="sidebar-nav"></nav>
+    </aside>
+    <div id="sidebar-resizer"></div>
+    <main id="main"></main>
+  </div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
