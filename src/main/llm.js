@@ -127,6 +127,74 @@ export const STATIC_MODEL_PRICING = {
   ollama: { '': { inPerM: 0, outPerM: 0 } },
 };
 
+// --- Live reference pricing from the public OpenRouter catalog --------------
+// OpenRouter's /models endpoint is public (no key) and lists most major
+// models with pass-through prices that track the providers' own list prices.
+// Its "vendor/slug" ids are mapped onto the native providers so direct API
+// users get current prices; the static table above is the offline fallback.
+// Refreshed lazily when a model list is fetched — never on a timer.
+
+const OPENROUTER_VENDOR_TO_PROVIDER = {
+  openai: 'openai',
+  anthropic: 'claude',
+  google: 'gemini',
+  deepseek: 'deepseek',
+  moonshotai: 'kimi',
+  qwen: 'qwen',
+};
+
+/** "claude-opus-4.8", "claude-opus-4-8", and dated snapshots share one key. */
+function normalizeModelId(id) {
+  return id.toLowerCase().replace(/\./g, '-').replace(/-\d{8}$/, '');
+}
+
+/** Build a {"provider|normalizedId" -> pricing} index from an OpenRouter model list. */
+export function buildLivePricingIndex(orModels) {
+  const index = new Map();
+  for (const m of orModels ?? []) {
+    if (!m.pricing) continue;
+    const [vendor, ...rest] = (m.id ?? '').split('/');
+    const provider = OPENROUTER_VENDOR_TO_PROVIDER[vendor];
+    const slug = rest.join('/');
+    if (!provider || !slug) continue;
+    // Variants (":free", ":extended") only fill gaps; the base listing wins
+    const isVariant = slug.includes(':');
+    const key = `${provider}|${normalizeModelId(slug.split(':')[0])}`;
+    const existing = index.get(key);
+    if (!existing || (existing.variant && !isVariant)) {
+      index.set(key, { inPerM: m.pricing.inPerM, outPerM: m.pricing.outPerM, variant: isVariant });
+    }
+  }
+  return index;
+}
+
+/** Pricing for a native provider/model from a live index, or null. */
+export function lookupLivePricing(index, provider, modelId) {
+  if (!index || !modelId) return null;
+  const hit = index.get(`${provider}|${normalizeModelId(modelId)}`);
+  return hit ? { inPerM: hit.inPerM, outPerM: hit.outPerM } : null;
+}
+
+let livePricingIndex = null;
+let livePricingFetchedAt = 0;
+const LIVE_PRICING_TTL_MS = 6 * 60 * 60 * 1000;
+const LIVE_PRICING_RETRY_MS = 10 * 60 * 1000;
+
+async function ensureLivePricing() {
+  const age = Date.now() - livePricingFetchedAt;
+  if (livePricingIndex ? age < LIVE_PRICING_TTL_MS : age < LIVE_PRICING_RETRY_MS) return;
+  livePricingFetchedAt = Date.now();
+  try {
+    const models = await listModels({ provider: 'openrouter', apiKey: '', baseURL: '' });
+    const index = buildLivePricingIndex(models);
+    if (index.size) livePricingIndex = index;
+  } catch {} // offline — static table covers it; retry after the backoff
+}
+
+function referencePricing(provider, modelId) {
+  return lookupLivePricing(livePricingIndex, provider, modelId) ?? lookupModelPricing(provider, modelId);
+}
+
 /** Reference pricing for a model, or null when unknown. Exact id, then longest prefix. */
 export function lookupModelPricing(provider, modelId) {
   const table = STATIC_MODEL_PRICING[provider];
@@ -690,8 +758,13 @@ async function attemptSend(req, config, stream, { onChunk, onImage, onFinishReas
  * at the model picker instead of at first send.
  * Each model: { id, name, context, imageOutput }.
  */
+const LIVE_PRICED_PROVIDERS = new Set(Object.values(OPENROUTER_VENDOR_TO_PROVIDER));
+
 export async function listModels(config) {
   try {
+    // Refresh live catalog prices for direct-API providers (lazy, TTL'd;
+    // the openrouter case below is already live by itself)
+    if (LIVE_PRICED_PROVIDERS.has(config.provider)) await ensureLivePricing();
     switch (config.provider) {
       case 'openrouter': {
         const res = await fetch(`${effectiveBaseURL(config)}/models`, {
@@ -722,7 +795,7 @@ export async function listModels(config) {
         if (!res.ok) throw new LLMError(`HTTP ${res.status}`, { status: res.status });
         const json = await res.json();
         return (json.data ?? [])
-          .map((m) => ({ id: m.id, name: m.id, context: null, imageOutput: false, pricing: lookupModelPricing('openai', m.id) }))
+          .map((m) => ({ id: m.id, name: m.id, context: null, imageOutput: false, pricing: referencePricing('openai', m.id) }))
           .filter((m) => /gpt|^o\d/.test(m.id))
           .sort((a, b) => a.id.localeCompare(b.id));
       }
@@ -743,7 +816,7 @@ export async function listModels(config) {
             context: m.context_length ?? m.max_model_len ?? m.max_context_length ?? null,
             imageOutput: false,
             // null for 'custom' — no reference table for arbitrary servers
-            pricing: lookupModelPricing(config.provider, m.id),
+            pricing: referencePricing(config.provider, m.id),
           }))
           .sort((a, b) => a.id.localeCompare(b.id));
       }
@@ -754,7 +827,7 @@ export async function listModels(config) {
         if (!res.ok) throw new LLMError(`HTTP ${res.status}`, { status: res.status });
         const json = await res.json();
         return (json.data ?? [])
-          .map((m) => ({ id: m.id, name: m.display_name ?? m.id, context: null, imageOutput: false, pricing: lookupModelPricing('claude', m.id) }))
+          .map((m) => ({ id: m.id, name: m.display_name ?? m.id, context: null, imageOutput: false, pricing: referencePricing('claude', m.id) }))
           .sort((a, b) => a.id.localeCompare(b.id));
       }
       case 'gemini': {
@@ -781,7 +854,7 @@ export async function listModels(config) {
         return (json.models ?? []).map((m) => ({ id: m.name, name: m.name, context: null, imageOutput: false, pricing: lookupModelPricing('ollama', m.name) }));
       }
       default:
-        return FALLBACK_MODELS[config.provider].map((id) => ({ id, name: id, context: null, imageOutput: false, pricing: lookupModelPricing(config.provider, id) }));
+        return FALLBACK_MODELS[config.provider].map((id) => ({ id, name: id, context: null, imageOutput: false, pricing: referencePricing(config.provider, id) }));
     }
   } catch (err) {
     if (err instanceof LLMError && (err.status === 401 || err.status === 403)) {
@@ -790,7 +863,7 @@ export async function listModels(config) {
         status: err.status,
       });
     }
-    return (FALLBACK_MODELS[config.provider] ?? []).map((id) => ({ id, name: id, context: null, imageOutput: false, pricing: lookupModelPricing(config.provider, id) }));
+    return (FALLBACK_MODELS[config.provider] ?? []).map((id) => ({ id, name: id, context: null, imageOutput: false, pricing: referencePricing(config.provider, id) }));
   }
 }
 

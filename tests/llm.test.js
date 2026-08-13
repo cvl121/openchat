@@ -4,7 +4,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { sendMessage, listModels, getCredits, LLMError, PROVIDERS, FALLBACK_MODELS, lookupModelPricing } from '../src/main/llm.js';
+import { sendMessage, listModels, getCredits, LLMError, PROVIDERS, FALLBACK_MODELS, lookupModelPricing, buildLivePricingIndex, lookupLivePricing } from '../src/main/llm.js';
+
+test('live pricing index: vendor mapping, id normalization, variant precedence', () => {
+  const index = buildLivePricingIndex([
+    { id: 'anthropic/claude-opus-4.8', pricing: { inPerM: 5, outPerM: 25 } },
+    { id: 'openai/gpt-4o:extended', pricing: { inPerM: 9, outPerM: 99 } },
+    { id: 'openai/gpt-4o', pricing: { inPerM: 2.5, outPerM: 10 } },
+    { id: 'google/gemini-3.1-pro-preview', pricing: { inPerM: 2, outPerM: 12 } },
+    { id: 'mistralai/mistral-large', pricing: { inPerM: 2, outPerM: 6 } }, // vendor not mapped to a native provider
+    { id: 'deepseek/deepseek-chat', pricing: null }, // catalog entry without pricing
+  ]);
+  // OpenRouter's dotted version maps onto the native dashed id
+  assert.deepEqual(lookupLivePricing(index, 'claude', 'claude-opus-4-8'), { inPerM: 5, outPerM: 25 });
+  // Dated snapshots normalize onto the same key
+  assert.deepEqual(lookupLivePricing(index, 'claude', 'claude-opus-4-8-20260101'), { inPerM: 5, outPerM: 25 });
+  // The base listing wins over a ":variant" even when the variant came first
+  assert.deepEqual(lookupLivePricing(index, 'openai', 'gpt-4o'), { inPerM: 2.5, outPerM: 10 });
+  assert.deepEqual(lookupLivePricing(index, 'gemini', 'gemini-3.1-pro-preview'), { inPerM: 2, outPerM: 12 });
+  // Unmapped vendors and priceless entries stay out of the index
+  assert.equal(lookupLivePricing(index, 'deepseek', 'deepseek-chat'), null);
+  assert.equal(index.has('kimi|mistral-large'), false);
+  assert.equal(lookupLivePricing(null, 'openai', 'gpt-4o'), null);
+});
 
 test('lookupModelPricing: exact ids, dated-id prefixes, and longest-prefix wins', () => {
   // Exact match
