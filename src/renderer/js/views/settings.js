@@ -6,7 +6,7 @@
 // full sampler customization, presets, prompt overrides, base URLs, and the
 // developer log.
 
-import { el, clear, toast, confirmDialog, estimateTokens } from '../util.js';
+import { el, clear, toast, confirmDialog, estimateTokens, formatModelPricing } from '../util.js';
 import {
   state,
   PROVIDERS,
@@ -20,6 +20,7 @@ import {
   DEFAULT_COMPRESSION_PROMPT,
   rememberModelContext,
   knownModelContext,
+  rememberModelPricing,
 } from '../state.js';
 import { sliderRow, checkboxRow, textRow, textareaRow, selectRow } from '../components.js';
 
@@ -105,7 +106,11 @@ async function fetchModels(config, { force = false } = {}) {
 function fillModelDatalist(datalist, models) {
   clear(datalist);
   for (const m of models) {
-    datalist.append(el('option', { value: m.id }, m.context ? `${m.name} (${m.context.toLocaleString()} ctx)` : m.name));
+    const parts = [];
+    if (m.context) parts.push(`${m.context.toLocaleString()} ctx`);
+    const price = formatModelPricing(m.pricing);
+    if (price) parts.push(price);
+    datalist.append(el('option', { value: m.id }, parts.length ? `${m.name} (${parts.join(' · ')})` : m.name));
   }
 }
 
@@ -201,7 +206,10 @@ function renderAPI() {
   let listedModels = []; // last fetched list, to cache the picked model's context
   const rememberPicked = () => {
     const picked = listedModels.find((m) => m.id === (s.models?.[s.activeAPI] ?? '').trim());
-    if (picked) rememberModelContext(s.activeAPI, picked.id, picked.context ?? 0);
+    if (picked) {
+      rememberModelContext(s.activeAPI, picked.id, picked.context ?? 0);
+      if (picked.pricing) rememberModelPricing(s.activeAPI, picked.id, picked.pricing);
+    }
   };
   modelInput.addEventListener('input', () => {
     s.models = s.models ?? {};
@@ -669,7 +677,15 @@ function renderGeneration() {
       hint: 'Higher = more creative, lower = more focused.' }),
     sliderRow('Max Response Tokens', { min: 64, max: 32768, step: 64, get: () => p.max_tokens, set: set('max_tokens'),
       hint: 'Upper bound on response length. Modern Claude/GPT models accept 32k+; older or smaller models may reject values above their own limit.' }),
-    checkboxRow('Stream responses (show text as it generates)', { get: () => p.stream_response, set: set('stream_response') })
+    checkboxRow('Stream responses (show text as it generates)', { get: () => p.stream_response, set: set('stream_response') }),
+    checkboxRow('Estimate message costs', {
+      get: () => s.showCostEstimates ?? true,
+      set: (v) => {
+        s.showCostEstimates = v;
+        scheduleSettingsSave();
+      },
+      hint: 'Tracks estimated tokens per reply and shows a running dollar total in the chat header. OpenRouter prices load live; OpenAI, Anthropic, Gemini, DeepSeek, Kimi, and Qwen use bundled reference prices (Ollama counts as free). Estimates are heuristic, not billing data.',
+    })
   );
 
   // Chat compression — keeps long conversations from resending everything

@@ -63,6 +63,82 @@ export const PROVIDERS = {
   },
 };
 
+// Reference list prices in USD per million tokens {inPerM, outPerM}, used for
+// providers whose model-list API doesn't report pricing (only OpenRouter does).
+// Matched by exact model id first, then longest key prefix — so dated ids like
+// "claude-sonnet-4-6-20251114" or preview suffixes still resolve. Approximate
+// list prices as of early 2026; cost estimates are heuristics, not billing.
+export const STATIC_MODEL_PRICING = {
+  claude: {
+    'claude-fable-5': { inPerM: 10, outPerM: 50 },
+    'claude-mythos-5': { inPerM: 10, outPerM: 50 },
+    'claude-opus-5': { inPerM: 5, outPerM: 25 },
+    'claude-opus-4-8': { inPerM: 5, outPerM: 25 },
+    'claude-opus-4-7': { inPerM: 5, outPerM: 25 },
+    'claude-opus-4-6': { inPerM: 5, outPerM: 25 },
+    'claude-opus-4-5': { inPerM: 5, outPerM: 25 },
+    'claude-opus-4-1': { inPerM: 15, outPerM: 75 },
+    'claude-opus-4-2025': { inPerM: 15, outPerM: 75 },
+    'claude-sonnet-5': { inPerM: 3, outPerM: 15 },
+    'claude-sonnet-4': { inPerM: 3, outPerM: 15 },
+    'claude-haiku-4-5': { inPerM: 1, outPerM: 5 },
+    'claude-3-5-haiku': { inPerM: 0.8, outPerM: 4 },
+    'claude-3-haiku': { inPerM: 0.25, outPerM: 1.25 },
+  },
+  openai: {
+    'gpt-5.1': { inPerM: 1.25, outPerM: 10 },
+    'gpt-5-mini': { inPerM: 0.25, outPerM: 2 },
+    'gpt-5-nano': { inPerM: 0.05, outPerM: 0.4 },
+    'gpt-5': { inPerM: 1.25, outPerM: 10 },
+    'gpt-4o-mini': { inPerM: 0.15, outPerM: 0.6 },
+    'gpt-4o': { inPerM: 2.5, outPerM: 10 },
+    'chatgpt-4o-latest': { inPerM: 5, outPerM: 15 },
+    'gpt-4.1-mini': { inPerM: 0.4, outPerM: 1.6 },
+    'gpt-4.1-nano': { inPerM: 0.1, outPerM: 0.4 },
+    'gpt-4.1': { inPerM: 2, outPerM: 8 },
+    'gpt-4-turbo': { inPerM: 10, outPerM: 30 },
+    'o3-mini': { inPerM: 1.1, outPerM: 4.4 },
+    o3: { inPerM: 2, outPerM: 8 },
+    'o4-mini': { inPerM: 1.1, outPerM: 4.4 },
+  },
+  gemini: {
+    'gemini-3.1-pro': { inPerM: 2, outPerM: 12 },
+    'gemini-3-pro': { inPerM: 2, outPerM: 12 },
+    'gemini-2.5-pro': { inPerM: 1.25, outPerM: 10 },
+    'gemini-2.5-flash-lite': { inPerM: 0.1, outPerM: 0.4 },
+    'gemini-2.5-flash': { inPerM: 0.3, outPerM: 2.5 },
+    'gemini-2.0-flash': { inPerM: 0.1, outPerM: 0.4 },
+  },
+  deepseek: {
+    'deepseek-chat': { inPerM: 0.28, outPerM: 0.42 },
+    'deepseek-reasoner': { inPerM: 0.28, outPerM: 0.42 },
+  },
+  kimi: {
+    kimi: { inPerM: 0.6, outPerM: 2.5 },
+    'moonshot-v1': { inPerM: 0.6, outPerM: 2.5 },
+  },
+  qwen: {
+    'qwen-max': { inPerM: 1.6, outPerM: 6.4 },
+    'qwen-plus': { inPerM: 0.4, outPerM: 1.2 },
+    'qwen-turbo': { inPerM: 0.05, outPerM: 0.2 },
+    'qwen-flash': { inPerM: 0.05, outPerM: 0.4 },
+  },
+  // Local models cost nothing to run per-token
+  ollama: { '': { inPerM: 0, outPerM: 0 } },
+};
+
+/** Reference pricing for a model, or null when unknown. Exact id, then longest prefix. */
+export function lookupModelPricing(provider, modelId) {
+  const table = STATIC_MODEL_PRICING[provider];
+  if (!table || !modelId) return null;
+  if (table[modelId]) return table[modelId];
+  let best = null;
+  for (const key of Object.keys(table)) {
+    if (modelId.startsWith(key) && (best === null || key.length > best.length)) best = key;
+  }
+  return best !== null ? table[best] : null;
+}
+
 export const FALLBACK_MODELS = {
   openrouter: [
     'google/gemini-3.1-pro-preview', 'google/gemini-3.5-flash', 'google/gemini-3.1-flash-image',
@@ -629,6 +705,13 @@ export async function listModels(config) {
             name: m.name ?? m.id,
             context: m.context_length ?? null,
             imageOutput: (m.architecture?.output_modalities ?? []).includes('image'),
+            // OpenRouter reports USD per single token; normalize to per-million
+            pricing: m.pricing
+              ? {
+                  inPerM: (parseFloat(m.pricing.prompt) || 0) * 1e6,
+                  outPerM: (parseFloat(m.pricing.completion) || 0) * 1e6,
+                }
+              : null,
           }))
           .sort((a, b) => a.id.localeCompare(b.id));
       }
@@ -639,7 +722,7 @@ export async function listModels(config) {
         if (!res.ok) throw new LLMError(`HTTP ${res.status}`, { status: res.status });
         const json = await res.json();
         return (json.data ?? [])
-          .map((m) => ({ id: m.id, name: m.id, context: null, imageOutput: false }))
+          .map((m) => ({ id: m.id, name: m.id, context: null, imageOutput: false, pricing: lookupModelPricing('openai', m.id) }))
           .filter((m) => /gpt|^o\d/.test(m.id))
           .sort((a, b) => a.id.localeCompare(b.id));
       }
@@ -659,6 +742,8 @@ export async function listModels(config) {
             // LM Studio / vLLM / llama.cpp report the window under varying keys
             context: m.context_length ?? m.max_model_len ?? m.max_context_length ?? null,
             imageOutput: false,
+            // null for 'custom' — no reference table for arbitrary servers
+            pricing: lookupModelPricing(config.provider, m.id),
           }))
           .sort((a, b) => a.id.localeCompare(b.id));
       }
@@ -669,7 +754,7 @@ export async function listModels(config) {
         if (!res.ok) throw new LLMError(`HTTP ${res.status}`, { status: res.status });
         const json = await res.json();
         return (json.data ?? [])
-          .map((m) => ({ id: m.id, name: m.display_name ?? m.id, context: null, imageOutput: false }))
+          .map((m) => ({ id: m.id, name: m.display_name ?? m.id, context: null, imageOutput: false, pricing: lookupModelPricing('claude', m.id) }))
           .sort((a, b) => a.id.localeCompare(b.id));
       }
       case 'gemini': {
@@ -693,10 +778,10 @@ export async function listModels(config) {
         const res = await fetch(`${base}/api/tags`);
         if (!res.ok) throw new LLMError(`HTTP ${res.status}`, { status: res.status });
         const json = await res.json();
-        return (json.models ?? []).map((m) => ({ id: m.name, name: m.name, context: null, imageOutput: false }));
+        return (json.models ?? []).map((m) => ({ id: m.name, name: m.name, context: null, imageOutput: false, pricing: lookupModelPricing('ollama', m.name) }));
       }
       default:
-        return FALLBACK_MODELS[config.provider].map((id) => ({ id, name: id, context: null, imageOutput: false }));
+        return FALLBACK_MODELS[config.provider].map((id) => ({ id, name: id, context: null, imageOutput: false, pricing: lookupModelPricing(config.provider, id) }));
     }
   } catch (err) {
     if (err instanceof LLMError && (err.status === 401 || err.status === 403)) {
@@ -705,7 +790,7 @@ export async function listModels(config) {
         status: err.status,
       });
     }
-    return (FALLBACK_MODELS[config.provider] ?? []).map((id) => ({ id, name: id, context: null, imageOutput: false }));
+    return (FALLBACK_MODELS[config.provider] ?? []).map((id) => ({ id, name: id, context: null, imageOutput: false, pricing: lookupModelPricing(config.provider, id) }));
   }
 }
 

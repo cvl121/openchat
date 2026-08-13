@@ -1,7 +1,7 @@
 // Chat view: message list, streaming generation, swipes, editing, history,
 // search, and export.
 
-import { el, clear, uuid, nowISO, formatTime, toast, modal, confirmDialog, escapeHtml } from '../util.js';
+import { el, clear, uuid, nowISO, formatTime, toast, modal, confirmDialog, escapeHtml, formatUSD, formatModelPricing } from '../util.js';
 import { renderMarkdown } from '../markdown.js';
 import { buildMessages, applicableWorldEntries } from '../promptBuilder.js';
 import {
@@ -30,6 +30,8 @@ import {
   isUnread,
   rememberModelContext,
   knownModelContext,
+  rememberModelPricing,
+  knownModelPricing,
 } from '../state.js';
 import { estimateTokens } from '../util.js';
 import { avatar, streamingDots } from '../components.js';
@@ -39,6 +41,10 @@ const ASSISTANT_NAME = ASSISTANT_CHARACTER.card.data.name;
 
 let cb = {}; // { renderSidebar, navigate, editCharacter }
 let streamingMsgEl = null; // content element receiving chunks
+// Unsent input, kept per conversation so switching away and back never loses
+// a draft (and never leaks one into another conversation). In-memory only.
+const chatDrafts = new Map(); // convKey -> {value, selStart, selEnd}
+let renderedDraftKey = null; // conversation the live #chat-input belongs to
 // Whether the view is anchored to the newest message. Distinct from a "near
 // bottom" proximity check: an attachment image finishing its async load can
 // grow a message by hundreds of pixels, leaving the viewport far from the
@@ -200,6 +206,20 @@ async function finishGeneration(run, { failed = false } = {}) {
       }
     }
   }
+  // The cost estimate rides on the message itself, so persisting it costs no
+  // extra writes (the append below carries it). Token counts are estimates;
+  // dollar figures appear only when the model's pricing is known (OpenRouter).
+  if (!failed && msg && chat.messages.includes(msg) && msg.mes.trim() && state.settings.showCostEstimates) {
+    const outTokens = estimateTokens(msg.mes);
+    const pricing = knownModelPricing(run.provider, run.model);
+    msg.extra = msg.extra ?? {};
+    msg.extra.cost = {
+      model: run.model,
+      inTokens: run.promptTokens ?? 0,
+      outTokens,
+      ...(pricing ? { usd: ((run.promptTokens ?? 0) * pricing.inPerM + outTokens * pricing.outPerM) / 1e6 } : {}),
+    };
+  }
   // Persist with the run's own refs — the chat may be backgrounded by now.
   // Brand-new messages append (O(message)); anything that mutated an
   // existing message (regenerate, swipe) rewrites the file.
@@ -220,6 +240,50 @@ async function finishGeneration(run, { failed = false } = {}) {
   if (onScreen) {
     renderChat();
     void maybeCompressChat(); // background; re-renders when done
+  }
+  if (!failed) void maybeAutoTitle(run); // background; renames when done
+}
+
+/**
+ * Replace the crude first-message-slice title with a short model-written one
+ * after the first exchange of a chat-mode conversation. Never overwrites a
+ * manual rename: it only runs while the title is still the auto placeholder,
+ * and re-checks after the call returns.
+ */
+async function maybeAutoTitle(run) {
+  if (run.charName !== ASSISTANT_NAME) return;
+  const chat = run.chat;
+  if (chat.messages.length !== 2) return; // exactly the first user turn + first reply
+  const placeholder = (chat.messages.find((m) => m.is_user)?.mes ?? '').slice(0, 64);
+  if (chat.metadata.title && chat.metadata.title !== placeholder) return;
+  const config = apiConfig(chat.metadata.model);
+  if (PROVIDERS[config.provider].requiresKey && !config.apiKey) return;
+  config.params.max_tokens = 24;
+  const transcript = chat.messages
+    .map((m) => `${m.is_user ? 'User' : 'Assistant'}: ${m.mes.slice(0, 500)}`)
+    .join('\n');
+  try {
+    const text = (
+      await window.tavern.llm.complete(
+        [
+          {
+            role: 'system',
+            content:
+              'Write a title of at most six words for this conversation. Reply with only the title — no quotes, no trailing punctuation.',
+          },
+          { role: 'user', content: transcript },
+        ],
+        config
+      )
+    )
+      ?.trim()
+      .replace(/^["'“]+|["'”]+$/g, '')
+      .slice(0, 64);
+    if (!text) return;
+    if (chat.metadata.title && chat.metadata.title !== placeholder) return; // renamed mid-flight
+    await renameConversation(chat.file, text);
+  } catch (err) {
+    devLog('INFO', `auto-title skipped: ${err.message}`); // placeholder title remains
   }
 }
 
@@ -257,7 +321,7 @@ async function maybeCompressChat() {
           `Conversation to summarize:\n\n${transcript}`,
       },
     ];
-    const config = apiConfig();
+    const config = apiConfig(chat.metadata.model);
     config.params.max_tokens = Math.min(1024, config.params.max_tokens || 1024);
     devLog('INFO', `compressing ${slice.length} older messages (threshold ${threshold})…`);
     const text = (await window.tavern.llm.complete(request, config))?.trim();
@@ -273,6 +337,21 @@ async function maybeCompressChat() {
   } finally {
     compressing = false;
   }
+}
+
+/**
+ * Persist a metadata change without disturbing streaming state: messages
+ * pending append (an in-flight reply) stay out of the rewrite so the
+ * finishing run's append can't duplicate them.
+ */
+async function persistChatMetadata(chat) {
+  if (!chat || !state.selectedCharacter) return;
+  await window.tavern.chats.rewrite(
+    state.selectedCharacter.card.data.name,
+    chat.file,
+    chat.metadata,
+    chat.messages.filter((m) => !newMessages.has(m)).map(({ __streaming, ...m }) => m)
+  );
 }
 
 async function persistChatFor(charName, chat) {
@@ -351,6 +430,12 @@ export async function deleteConversation(file) {
     window.tavern.llm.stop(run.requestId);
   }
   clearUnread(ASSISTANT_NAME, file);
+  chatDrafts.delete(convKey(ASSISTANT_NAME, file));
+  const pins = state.settings.pinnedConversations;
+  if (pins?.includes(file)) {
+    state.settings.pinnedConversations = pins.filter((f) => f !== file);
+    scheduleSettingsSave();
+  }
   await window.tavern.chats.delete(ASSISTANT_NAME, file);
   await refreshConversations();
   if (state.currentChat?.file === file) {
@@ -460,7 +545,7 @@ export function renderChat({ scrollBottom = false } = {}) {
     }
   }
   const prevInput = document.getElementById('chat-input');
-  const draft = prevInput
+  let draft = prevInput
     ? {
         value: prevInput.value,
         focused: document.activeElement === prevInput,
@@ -468,6 +553,21 @@ export function renderChat({ scrollBottom = false } = {}) {
         selEnd: prevInput.selectionEnd,
       }
     : null;
+  // Same conversation: carry the live draft across the rebuild. Different
+  // conversation: stash the old draft under its own key and pull this
+  // conversation's stored draft instead.
+  const draftKey =
+    state.currentChat && state.selectedCharacter
+      ? convKey(state.selectedCharacter.card.data.name, state.currentChat.file)
+      : null;
+  if (renderedDraftKey !== draftKey) {
+    if (renderedDraftKey != null && draft) {
+      if (draft.value) chatDrafts.set(renderedDraftKey, draft);
+      else chatDrafts.delete(renderedDraftKey);
+    }
+    draft = draftKey ? (chatDrafts.get(draftKey) ?? null) : null;
+  }
+  renderedDraftKey = draftKey;
 
   clear(main);
 
@@ -493,7 +593,7 @@ export function renderChat({ scrollBottom = false } = {}) {
   }
 
   const data = state.selectedCharacter.card.data;
-  const config = apiConfig();
+  const config = apiConfig(state.currentChat?.metadata?.model);
   const notice = currentNotice();
   const chatTitle = isChatMode()
     ? state.currentChat?.metadata?.title || 'New conversation'
@@ -502,6 +602,9 @@ export function renderChat({ scrollBottom = false } = {}) {
   const allMessages = state.currentChat?.messages ?? [];
   // Estimate what actually gets sent: summary stands in for compressed messages
   const compressedCount = Math.min(state.currentChat?.metadata?.summary?.upToIndex ?? 0, allMessages.length);
+  const costTotal = state.settings.showCostEstimates
+    ? allMessages.reduce((sum, m) => sum + (m.extra?.cost?.usd ?? 0), 0)
+    : 0;
   const tokenEstimate = estimateTokens(
     allMessages.slice(compressedCount).map((m) => m.mes).join(' ') +
       (state.currentChat?.metadata?.summary?.text ?? '') +
@@ -520,9 +623,20 @@ export function renderChat({ scrollBottom = false } = {}) {
         el(
           'span',
           { class: 'chat-meta' },
-          `${allMessages.length} messages · ~${tokenEstimate.toLocaleString()} tokens` +
-            (compressedCount > 0 ? ` · ${compressedCount} compressed` : '') +
-            (notice.trimmed > 0 ? ` · ${notice.trimmed} oldest not sent (context full)` : '')
+          `${allMessages.length} messages · ~${tokenEstimate.toLocaleString()} tokens`,
+          compressedCount > 0
+            ? el(
+                'span',
+                {
+                  class: 'meta-link',
+                  title: 'View or edit the compressed-history summary',
+                  onclick: () => openSummaryEditor(),
+                },
+                ` · ${compressedCount} compressed`
+              )
+            : null,
+          notice.trimmed > 0 ? ` · ${notice.trimmed} oldest not sent (context full)` : null,
+          costTotal > 0 ? ` · ~${formatUSD(costTotal)}` : null
         )
       ),
       el(
@@ -535,14 +649,12 @@ export function renderChat({ scrollBottom = false } = {}) {
         },
         config.model || 'Choose model…'
       ),
-      !isChatMode()
-        ? el('button', {
-            class: `btn-icon${state.currentChat?.metadata?.authorsNote?.text ? ' active' : ''}`,
-            title: "Author's note for this chat",
-            'aria-label': "Author's note",
-            onclick: () => openAuthorsNote(),
-          }, '📝')
-        : null,
+      el('button', {
+        class: `btn-icon${state.currentChat?.metadata?.authorsNote?.text ? ' active' : ''}`,
+        title: isChatMode() ? 'Instructions for this conversation' : "Author's note for this chat",
+        'aria-label': isChatMode() ? 'Conversation instructions' : "Author's note",
+        onclick: () => openAuthorsNote(),
+      }, '📝'),
       el('button', { class: 'btn-icon', title: 'Search (⌘F)', 'aria-label': 'Search', onclick: () => openSearch() }, '🔍'),
       el('button', { class: 'btn-icon', title: 'Chat history (⌘⇧H)', 'aria-label': 'Chat history', onclick: () => openHistory() }, '🕘'),
       el('button', { class: 'btn-icon', title: 'Export this chat', 'aria-label': 'Export this chat', onclick: () => exportCurrentChat() }, '⬆'),
@@ -674,8 +786,13 @@ export function renderChat({ scrollBottom = false } = {}) {
     for (const file of e.dataTransfer.files) {
       const path = window.tavern.misc?.pathForFile?.(file);
       try {
-        if (path) pendingAttachments.push(await window.tavern.files.importUpload(path));
-        else await stageFileObject(file);
+        if (path) {
+          const attachment = await window.tavern.files.importUpload(path);
+          pendingAttachments.push(attachment);
+          warnUnreadableAttachment(attachment);
+        } else {
+          await stageFileObject(file);
+        }
         staged++;
       } catch (err) {
         toast(`Could not attach ${file.name}: ${err.message}`, 'error');
@@ -923,7 +1040,14 @@ function messageEl(msg, index) {
       'div',
       { class: 'msg-header' },
       el('span', { class: 'msg-name' }, msg.name),
-      el('span', { class: 'msg-time' }, formatTime(msg.send_date)),
+      el('span', {
+        class: 'msg-time',
+        title: msg.extra?.cost
+          ? `~${msg.extra.cost.inTokens.toLocaleString()} in → ${msg.extra.cost.outTokens.toLocaleString()} out tokens` +
+            (msg.extra.cost.usd != null ? ` · ~${formatUSD(msg.extra.cost.usd)}` : '') +
+            (msg.extra.cost.model ? ` · ${msg.extra.cost.model}` : '')
+          : undefined,
+      }, formatTime(msg.send_date)),
       actions
     ),
     attachmentStrip(msg),
@@ -982,12 +1106,21 @@ const ATTACH_FILTERS = [
   { name: 'All files', extensions: ['*'] },
 ];
 
+/** Attachments the model can't read (PDF etc.) are sent as a filename mention only — say so. */
+function warnUnreadableAttachment(attachment) {
+  if (attachment?.kind === 'file') {
+    toast(`${attachment.name}: the model will see the filename only — this file type isn't readable yet`);
+  }
+}
+
 async function attachFiles() {
   const files = await window.tavern.dialog.openFile({ multi: true, filters: ATTACH_FILTERS });
   let staged = 0;
   for (const path of files) {
     try {
-      pendingAttachments.push(await window.tavern.files.importUpload(path));
+      const attachment = await window.tavern.files.importUpload(path);
+      pendingAttachments.push(attachment);
+      warnUnreadableAttachment(attachment);
       staged++;
     } catch (err) {
       toast(`Could not attach file: ${err.message}`, 'error');
@@ -1084,26 +1217,42 @@ export async function sendMessage({ asImage = false } = {}) {
   await generateResponse(useImage ? { configOverride: imageApiConfig() } : {});
 }
 
+// Models whose pricing was looked up but not found this session, so an
+// unpriced model (custom server) doesn't refetch the list on every send
+const pricingChecked = new Set(); // "provider|model"
+
 /**
  * Effective context size for this request. Auto mode uses the model's
  * advertised max context; the first send with an unknown model fetches the
  * provider's model list once and the answer is cached (0 = the provider
  * doesn't report one), so later sends resolve synchronously. Falls back to
- * the manual context_size, where 0 means unlimited.
+ * the manual context_size, where 0 means unlimited. The same fetch also
+ * caches the model's pricing for cost estimates.
  */
 async function resolveContextSize(config) {
   const p = config.params;
-  if (!p.context_size_auto) return p.context_size;
+  const key = `${config.provider}|${config.model}`;
   let known = knownModelContext(config.provider, config.model);
-  if (known === undefined) {
+  const needContext = p.context_size_auto && known === undefined;
+  const needPricing =
+    state.settings.showCostEstimates &&
+    !knownModelPricing(config.provider, config.model) &&
+    !pricingChecked.has(key);
+  if (needContext || needPricing) {
     try {
       const models = await window.tavern.llm.models(config);
-      known = models.find((m) => m.id === config.model)?.context ?? 0;
-      rememberModelContext(config.provider, config.model, known);
+      const found = models.find((m) => m.id === config.model);
+      if (found || known === undefined) {
+        known = found?.context ?? 0;
+        rememberModelContext(config.provider, config.model, known);
+      }
+      if (found?.pricing) rememberModelPricing(config.provider, config.model, found.pricing);
+      pricingChecked.add(key);
     } catch {
-      known = 0; // offline / unlistable server — retry next send, use manual for now
+      known = known ?? 0; // offline / unlistable server — retry next send, use manual for now
     }
   }
+  if (!p.context_size_auto) return p.context_size;
   return known > 0 ? known : p.context_size;
 }
 
@@ -1116,7 +1265,7 @@ async function generateResponse({
 } = {}) {
   if (!chat || !character || runForChat(chat)) return; // one run per conversation
   const charName = character.card.data.name;
-  const config = configOverride ?? apiConfig();
+  const config = configOverride ?? apiConfig(chat.metadata.model);
   const foreground = () => chat === state.currentChat && state.view === 'chat';
   setNotice(charName, chat.file, { error: null, finishReason: null, configOverride });
 
@@ -1168,7 +1317,19 @@ async function generateResponse({
   msg.__streaming = true;
 
   const requestId = uuid();
-  const run = { requestId, character, charName, file: chat.file, chat, msg, configOverride };
+  const run = {
+    requestId,
+    character,
+    charName,
+    file: chat.file,
+    chat,
+    msg,
+    configOverride,
+    // For the post-reply cost estimate
+    provider: config.provider,
+    model: config.model,
+    promptTokens: stats.promptTokens ?? 0,
+  };
   state.runs.set(requestId, run);
   devLog('REQ', `${config.provider}/${config.model} · ${prompt.length} messages · ~${stats.promptTokens} tokens${trimmed ? ` · ${trimmed} trimmed` : ''} · ${JSON.stringify(prompt.at(-1))?.slice(0, 300)}`);
   // A fresh send jumps to the new message; continuations (regenerate,
@@ -1380,7 +1541,7 @@ async function branchFrom(index) {
  */
 async function impersonate() {
   if (isCurrentChatGenerating() || impersonating || !state.currentChat || !state.selectedCharacter) return;
-  const config = apiConfig();
+  const config = apiConfig(state.currentChat.metadata?.model);
   config.params.context_size = await resolveContextSize(config);
   const character = state.selectedCharacter.card.data;
   const name = userName();
@@ -1425,22 +1586,33 @@ async function impersonate() {
   }
 }
 
-/** Per-chat Author's Note: a style/direction note injected near the end of the prompt. */
+/** Per-chat Author's Note: a style/direction note injected near the end of the prompt.
+ *  Chat mode presents the same mechanism as per-conversation instructions. */
 function openAuthorsNote() {
   const chat = state.currentChat;
   if (!chat) return;
+  const chatty = isChatMode();
   const current = chat.metadata.authorsNote ?? { text: '', depth: 4 };
-  const textarea = el('textarea', { rows: 5, placeholder: 'e.g. "Focus on the heist plan. Keep the pacing tense. No time skips."' }, current.text ?? '');
+  const textarea = el('textarea', {
+    rows: 5,
+    placeholder: chatty
+      ? 'e.g. "Answer in Spanish. I\'m a beginner programmer — explain code line by line."'
+      : 'e.g. "Focus on the heist plan. Keep the pacing tense. No time skips."',
+  }, current.text ?? '');
   const depthInput = el('input', { type: 'number', min: 0, max: 20, value: current.depth ?? 4, style: { maxWidth: '80px' } });
   const content = el(
     'div',
     {},
-    el('h2', {}, "Author's Note"),
+    el('h2', {}, chatty ? 'Conversation Instructions' : "Author's Note"),
     el('p', { class: 'hint', style: { marginBottom: '10px' } },
-      'Guidance for this chat only, injected near the end of the prompt where the model pays the most attention. Supports {{char}} and {{user}}.'),
+      chatty
+        ? 'Extra instructions for this conversation only, injected near the end of the prompt where the model pays the most attention.'
+        : 'Guidance for this chat only, injected near the end of the prompt where the model pays the most attention. Supports {{char}} and {{user}}.'),
     textarea,
-    el('div', { class: 'form-inline', style: { marginTop: '10px' } },
-      el('label', { style: { margin: 0 } }, 'Insertion depth (messages from the end)'), depthInput),
+    chatty
+      ? null
+      : el('div', { class: 'form-inline', style: { marginTop: '10px' } },
+          el('label', { style: { margin: 0 } }, 'Insertion depth (messages from the end)'), depthInput),
     el(
       'div',
       { class: 'modal-actions' },
@@ -1464,6 +1636,52 @@ function openAuthorsNote() {
   textarea.focus();
 }
 
+/** View, edit, or clear the running summary that stands in for compressed history. */
+function openSummaryEditor() {
+  const chat = state.currentChat;
+  const summary = chat?.metadata?.summary;
+  if (!chat || !summary) return;
+  const textarea = el('textarea', { rows: 12 }, summary.text ?? '');
+  const content = el(
+    'div',
+    {},
+    el('h2', {}, 'Compressed History'),
+    el('p', { class: 'hint', style: { marginBottom: '10px' } },
+      `The oldest ${Math.min(summary.upToIndex ?? 0, chat.messages.length)} messages are sent as this summary instead of verbatim. ` +
+        'Edit it to correct what the model remembers, or clear it to resend the full history.'),
+    textarea,
+    el(
+      'div',
+      { class: 'modal-actions', style: { justifyContent: 'space-between' } },
+      el('button', {
+        class: 'btn btn-danger',
+        onclick: async () => {
+          delete chat.metadata.summary;
+          await persistChatMetadata(chat);
+          overlay.close();
+          renderChat();
+          toast('Summary cleared — the full history will be sent again', 'ok');
+        },
+      }, 'Clear Summary'),
+      el('div', { class: 'form-inline' },
+        el('button', { class: 'btn', onclick: () => overlay.close() }, 'Cancel'),
+        el('button', {
+          class: 'btn btn-primary',
+          onclick: async () => {
+            const text = textarea.value.trim();
+            if (text) chat.metadata.summary = { ...summary, text };
+            else delete chat.metadata.summary;
+            await persistChatMetadata(chat);
+            overlay.close();
+            renderChat();
+            toast('Summary updated', 'ok');
+          },
+        }, 'Save'))
+    )
+  );
+  const overlay = modal(content, { width: 620 });
+}
+
 /** Quick model switcher on the toolbar model chip. */
 function openModelSwitcher() {
   const s = state.settings;
@@ -1473,9 +1691,17 @@ function openModelSwitcher() {
     s.activeAPI = provider;
     s.models = s.models ?? {};
     s.models[provider] = model;
-    // The fetched list knows the model's max context — keep it for auto mode
+    // The fetched list knows the model's max context/pricing — keep both
     const picked = available.find((m) => m.id === model);
-    if (picked) rememberModelContext(provider, model, picked.context ?? 0);
+    if (picked) {
+      rememberModelContext(provider, model, picked.context ?? 0);
+      if (picked.pricing) rememberModelPricing(provider, model, picked.pricing);
+    }
+    // Each conversation remembers its model; new conversations use the global
+    if (state.currentChat) {
+      state.currentChat.metadata.model = { provider, model };
+      void persistChatMetadata(state.currentChat);
+    }
     scheduleSettingsSave();
     overlay.close();
     renderChat();
@@ -1509,6 +1735,8 @@ function openModelSwitcher() {
         const parts = [];
         if (m.name && m.name !== m.id) parts.push(m.name);
         if (m.context) parts.push(`${m.context.toLocaleString()} ctx`);
+        const price = formatModelPricing(m.pricing);
+        if (price) parts.push(price);
         results.append(row(s.activeAPI, m.id, parts.join(' · ') || undefined));
       }
       if (!matches.length) results.append(el('p', { class: 'hint' }, 'No matching models.'));
@@ -1533,6 +1761,24 @@ function openModelSwitcher() {
   const overlay = modal(content, { width: 520 });
   renderList();
   filter.focus();
+}
+
+/** Ctrl+Tab / Ctrl+Shift+Tab: cycle conversations (chat mode) or characters (role play). */
+export async function cycleConversation(dir) {
+  if (state.view !== 'chat') return;
+  if (isChatMode()) {
+    const list = state.conversations;
+    if (list.length < 2) return;
+    const idx = list.findIndex((c) => c.file === state.currentChat?.file);
+    const next = list[(idx + dir + list.length) % list.length];
+    if (next && next.file !== state.currentChat?.file) await selectConversation(next.file);
+  } else {
+    const list = state.characters;
+    if (list.length < 2) return;
+    const idx = list.findIndex((c) => c.filename === state.selectedCharacter?.filename);
+    const next = list[((idx < 0 ? 0 : idx) + dir + list.length) % list.length];
+    if (next && next.filename !== state.selectedCharacter?.filename) await selectCharacter(next);
+  }
 }
 
 /** Remember the chat model of each send for the quick switcher. */
@@ -1673,7 +1919,7 @@ async function importChatFile(charName) {
   }
 }
 
-export function openSearch(initialQuery = '') {
+export function openSearch(initialQuery = '', initialScope = 'current') {
   const content = el('div', {}, el('h2', {}, 'Search'));
   const input = el('input', { type: 'text', placeholder: 'Search messages…', value: initialQuery });
   const scope = el(
@@ -1682,6 +1928,7 @@ export function openSearch(initialQuery = '') {
     el('option', { value: 'current' }, 'This conversation'),
     el('option', { value: 'all' }, 'All chats')
   );
+  scope.value = initialScope;
   const results = el('div', { class: 'search-results' });
   content.append(el('div', { class: 'form-inline' }, input, scope), results);
   const overlay = modal(content, { width: 620 });

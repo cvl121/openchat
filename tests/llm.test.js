@@ -4,7 +4,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { sendMessage, listModels, getCredits, LLMError, PROVIDERS, FALLBACK_MODELS } from '../src/main/llm.js';
+import { sendMessage, listModels, getCredits, LLMError, PROVIDERS, FALLBACK_MODELS, lookupModelPricing } from '../src/main/llm.js';
+
+test('lookupModelPricing: exact ids, dated-id prefixes, and longest-prefix wins', () => {
+  // Exact match
+  assert.deepEqual(lookupModelPricing('claude', 'claude-sonnet-5'), { inPerM: 3, outPerM: 15 });
+  // Dated snapshot resolves via prefix
+  assert.deepEqual(lookupModelPricing('claude', 'claude-haiku-4-5-20251001'), { inPerM: 1, outPerM: 5 });
+  // Longest prefix wins: opus-4-1 must not fall into the opus-4-x $5 tier
+  assert.equal(lookupModelPricing('claude', 'claude-opus-4-1-20250805').inPerM, 15);
+  assert.equal(lookupModelPricing('claude', 'claude-opus-4-8').inPerM, 5);
+  // Gemini flash-lite must beat the shorter "gemini-2.5-flash" prefix
+  assert.equal(lookupModelPricing('gemini', 'gemini-2.5-flash-lite-preview').inPerM, 0.1);
+  assert.equal(lookupModelPricing('gemini', 'gemini-2.5-flash-preview-05-20').inPerM, 0.3);
+  // Local models are free
+  assert.deepEqual(lookupModelPricing('ollama', 'llama3.1'), { inPerM: 0, outPerM: 0 });
+  // Unknown model / provider without a table
+  assert.equal(lookupModelPricing('openai', 'some-experimental-model'), null);
+  assert.equal(lookupModelPricing('custom', 'gpt-4o'), null);
+  assert.equal(lookupModelPricing('openrouter', 'openai/gpt-4o'), null);
+});
 
 function startMockServer() {
   const server = http.createServer((req, res) => {
