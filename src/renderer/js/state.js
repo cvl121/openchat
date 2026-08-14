@@ -135,6 +135,25 @@ export function knownModelContext(provider, model) {
   return state.settings?.modelContextCache?.[`${provider}|${model}`];
 }
 
+// settings.modelPricingCache: {"provider|modelId": {inPerM, outPerM}} — USD per
+// million tokens for models that have been listed or used. OpenRouter reports
+// pricing in its model list; other providers stay unknown (no cost shown).
+
+export function rememberModelPricing(provider, model, pricing) {
+  if (!model || !pricing) return;
+  const cache = (state.settings.modelPricingCache ??= {});
+  const key = `${provider}|${model}`;
+  const cur = cache[key];
+  if (cur?.inPerM !== pricing.inPerM || cur?.outPerM !== pricing.outPerM) {
+    cache[key] = { inPerM: pricing.inPerM, outPerM: pricing.outPerM };
+    scheduleSettingsSave();
+  }
+}
+
+export function knownModelPricing(provider, model) {
+  return state.settings?.modelPricingCache?.[`${provider}|${model}`] ?? null;
+}
+
 // --- Unread conversations ----------------------------------------------------
 // settings.unreadConversations: {"CharName/file.jsonl": true} — a reply landed
 // while the conversation was backgrounded and hasn't been opened since.
@@ -169,15 +188,27 @@ export function chatSystemPrompt() {
   return state.settings?.chatSystemPrompt?.trim() || DEFAULT_CHAT_SYSTEM_PROMPT;
 }
 
-/** Resolve the active provider/model/key/params into one request config. */
-export function apiConfig() {
+/**
+ * Resolve the active provider/model/key/params into one request config.
+ * `override` ({provider, model}, e.g. a conversation's remembered model) wins
+ * over the globals when its provider is still usable (known + keyed).
+ */
+export function apiConfig(override = null) {
   const s = state.settings;
-  const provider = s.activeAPI;
+  let provider = s.activeAPI;
+  let model = null;
+  if (override?.provider && PROVIDERS[override.provider]) {
+    const usable = !PROVIDERS[override.provider].requiresKey || !!s.apiKeys[override.provider];
+    if (usable) {
+      provider = override.provider;
+      model = override.model || null;
+    }
+  }
   return {
     provider,
     apiKey: s.apiKeys[provider] ?? '',
     baseURL: s.baseURLs?.[provider] ?? '',
-    model: s.models?.[provider] || PROVIDERS[provider].defaultModel,
+    model: model || s.models?.[provider] || PROVIDERS[provider].defaultModel,
     params: { ...s.generationParams },
     requestImages: !!s.requestImageOutput,
   };

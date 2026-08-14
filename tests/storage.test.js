@@ -51,6 +51,32 @@ test('settings: defaults on missing file, round-trip on save', () => {
   assert.equal(typeof reloaded.generationParams.temperature, 'number');
 });
 
+test('settings: chat-mode feature defaults are present', () => {
+  fs.rmSync(path.join(tmp, 'user', 'settings.json'), { force: true });
+  const fresh = loadSettings();
+  assert.deepEqual(fresh.pinnedConversations, []);
+  assert.deepEqual(fresh.modelPricingCache, {});
+  assert.equal(fresh.showCostEstimates, true);
+});
+
+test('chats: listChats cache invalidates on append and rewrite', () => {
+  const { file } = createChat('CacheChar', 'User');
+  const first = listChats('CacheChar').find((c) => c.file === file);
+  assert.equal(first.messageCount, 0);
+  appendMessage('CacheChar', file, { name: 'User', is_user: true, mes: 'hello cache' });
+  const afterAppend = listChats('CacheChar').find((c) => c.file === file);
+  assert.equal(afterAppend.messageCount, 1);
+  assert.equal(afterAppend.preview, 'hello cache');
+  const meta = { ...afterAppend.metadata, title: 'Renamed' };
+  rewriteChat('CacheChar', file, meta, [{ name: 'User', is_user: true, mes: 'rewritten' }]);
+  const afterRewrite = listChats('CacheChar').find((c) => c.file === file);
+  assert.equal(afterRewrite.metadata.title, 'Renamed');
+  assert.equal(afterRewrite.preview, 'rewritten');
+  // Unchanged files return the same cached entry object
+  const again = listChats('CacheChar').find((c) => c.file === file);
+  assert.equal(again, afterRewrite);
+});
+
 test('settings: unread conversations default to empty and round-trip', () => {
   fs.rmSync(path.join(tmp, 'user', 'settings.json'), { force: true });
   const fresh = loadSettings();

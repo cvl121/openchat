@@ -86,6 +86,31 @@ const CJK_RE =
   /[\u1100-\u11FF\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFFEF\u{20000}-\u{2FA1F}]/gu;
 
 /** Rough token estimate: CJK chars count as 1 token, everything else as 1/4. */
+/** Flatten markdown to plain text for one-line previews and title fallbacks. */
+export function stripMarkdown(text) {
+  return (text ?? '')
+    .replace(/```[\s\S]*?```/g, ' [code] ')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^[#>\s]+|[*_~]+/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** "$1.25 in · $5.00 out /M", "free", or null when pricing is unknown. */
+export function formatModelPricing(pricing) {
+  if (!pricing) return null;
+  if (!pricing.inPerM && !pricing.outPerM) return 'free';
+  const fmt = (v) => (v >= 1 ? `$${v.toFixed(2)}` : `$${v.toPrecision(2)}`);
+  return `${fmt(pricing.inPerM)} in · ${fmt(pricing.outPerM)} out /M`;
+}
+
+/** "$0.0031" below a cent, "$1.24" above. */
+export function formatUSD(usd) {
+  return usd >= 0.1 ? `$${usd.toFixed(2)}` : `$${usd.toPrecision(2)}`;
+}
+
 export function estimateTokens(text) {
   const s = text ?? '';
   const cjk = (s.match(CJK_RE) ?? []).length;

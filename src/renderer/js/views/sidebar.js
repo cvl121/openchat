@@ -1,7 +1,7 @@
 // Conversation sidebar: search, pinned + recent characters, bottom navigation.
 // Chat mode swaps the character list for the assistant's conversation list.
 
-import { el, clear, relativeDate, toast, confirmDialog, promptDialog } from '../util.js';
+import { el, clear, relativeDate, toast, confirmDialog, promptDialog, stripMarkdown } from '../util.js';
 import { state, avatarURL, scheduleSettingsSave, isChatMode, runFor, isUnread } from '../state.js';
 import { avatar, streamingDots } from '../components.js';
 
@@ -156,7 +156,26 @@ function renderList() {
 // --- Chat mode: assistant conversation list --------------------------------
 
 function conversationTitle(convo) {
-  return convo.metadata?.title || convo.preview?.slice(0, 40) || 'New conversation';
+  return convo.metadata?.title || stripMarkdown(convo.preview ?? '').slice(0, 40) || 'New conversation';
+}
+
+/** Sidebar bucket for a conversation's last-activity time. */
+function dateGroupLabel(mtime) {
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  if (mtime >= startOfToday) return 'Today';
+  if (mtime >= startOfToday - 86400e3) return 'Yesterday';
+  if (mtime >= startOfToday - 7 * 86400e3) return 'Previous 7 Days';
+  return 'Older';
+}
+
+function togglePinConversation(file) {
+  const pins = state.settings.pinnedConversations ?? [];
+  state.settings.pinnedConversations = pins.includes(file)
+    ? pins.filter((f) => f !== file)
+    : [...pins, file];
+  scheduleSettingsSave();
+  renderSidebar();
 }
 
 /**
@@ -180,8 +199,7 @@ function renderConversationList() {
       'button',
       { class: 'btn btn-primary new-chat-btn', onclick: () => callbacks.newChat?.() },
       '+ New Chat'
-    ),
-    el('div', { class: 'sidebar-section-title' }, 'Conversations')
+    )
   );
 
   const q = searchQuery.trim().toLowerCase();
@@ -195,53 +213,80 @@ function renderConversationList() {
   }
   if (!convos.length) {
     host.append(
+      el('div', { class: 'sidebar-section-title' }, 'Conversations'),
       el(
         'div',
         { style: { padding: '14px 10px', color: 'var(--text-dim)', fontSize: '12px' } },
         q ? 'No matches.' : 'No conversations yet.'
       )
     );
+    return;
   }
-  for (const convo of convos) {
-    const selected = state.currentChat?.file === convo.file && state.view === 'chat';
-    const row = el(
+
+  const pins = new Set(state.settings?.pinnedConversations ?? []);
+  const pinnedConvos = convos.filter((c) => pins.has(c.file));
+  const rest = convos.filter((c) => !pins.has(c.file));
+  if (pinnedConvos.length) {
+    host.append(el('div', { class: 'sidebar-section-title' }, 'Pinned'));
+    for (const convo of pinnedConvos) host.append(conversationRow(convo, true));
+  }
+  // Already mtime-sorted, so group titles appear as the bucket changes
+  let lastGroup = null;
+  for (const convo of rest) {
+    const group = dateGroupLabel(convo.mtime);
+    if (group !== lastGroup) {
+      host.append(el('div', { class: 'sidebar-section-title' }, group));
+      lastGroup = group;
+    }
+    host.append(conversationRow(convo, false));
+  }
+}
+
+function conversationRow(convo, isPinned) {
+  const selected = state.currentChat?.file === convo.file && state.view === 'chat';
+  const row = el(
+    'div',
+    {
+      class: `conv-row${selected ? ' selected' : ''}`,
+      onclick: () => callbacks.selectConversation?.(convo.file),
+    },
+    el(
       'div',
-      {
-        class: `conv-row${selected ? ' selected' : ''}`,
-        onclick: () => callbacks.selectConversation?.(convo.file),
-      },
+      { class: 'conv-info' },
       el(
         'div',
-        { class: 'conv-info' },
-        el('div', { class: 'conv-name' }, conversationTitle(convo)),
-        el(
-          'div',
-          { class: 'conv-sub' },
-          `${relativeDate(convo.mtime)} · ${convo.messageCount} messages`
-        )
+        { class: 'conv-name' },
+        isPinned ? el('span', { class: 'pin-badge' }, '📌') : null,
+        conversationTitle(convo)
       ),
-      rowIndicator({
-        processing: !!runFor('Assistant', convo.file),
-        unread: isUnread('Assistant', convo.file),
-      })
-    );
-    row.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      showMenu(e, [
-        ['Rename', async () => {
-          const title = await promptDialog('Rename conversation', { value: conversationTitle(convo), confirmLabel: 'Rename' });
-          if (title?.trim()) await callbacks.renameConversation?.(convo.file, title.trim());
-        }],
-        ['Export as Markdown', () => exportConversation(convo.file, 'markdown')],
-        ['Export as JSONL', () => exportConversation(convo.file, 'jsonl')],
-        ['Delete', async () => {
-          const ok = await confirmDialog('Delete this conversation?');
-          if (ok) await callbacks.deleteConversation?.(convo.file);
-        }, true],
-      ]);
-    });
-    host.append(row);
-  }
+      el(
+        'div',
+        { class: 'conv-sub' },
+        `${relativeDate(convo.mtime)} · ${convo.messageCount} messages`
+      )
+    ),
+    rowIndicator({
+      processing: !!runFor('Assistant', convo.file),
+      unread: isUnread('Assistant', convo.file),
+    })
+  );
+  row.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    showMenu(e, [
+      [isPinned ? 'Unpin' : 'Pin', () => togglePinConversation(convo.file)],
+      ['Rename', async () => {
+        const title = await promptDialog('Rename conversation', { value: conversationTitle(convo), confirmLabel: 'Rename' });
+        if (title?.trim()) await callbacks.renameConversation?.(convo.file, title.trim());
+      }],
+      ['Export as Markdown', () => exportConversation(convo.file, 'markdown')],
+      ['Export as JSONL', () => exportConversation(convo.file, 'jsonl')],
+      ['Delete', async () => {
+        const ok = await confirmDialog('Delete this conversation?');
+        if (ok) await callbacks.deleteConversation?.(convo.file);
+      }, true],
+    ]);
+  });
+  return row;
 }
 
 async function exportConversation(file, format) {

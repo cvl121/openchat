@@ -156,6 +156,9 @@ export const DEFAULT_SETTINGS = {
   sendOnEnter: true,
   unreadConversations: {}, // "CharName/chatfile.jsonl" -> true (reply finished while backgrounded)
   modelContextCache: {}, // "provider|modelId" -> advertised max context (0 = provider doesn't report one)
+  modelPricingCache: {}, // "provider|modelId" -> {inPerM, outPerM} USD per million tokens
+  pinnedConversations: [], // chat-mode conversation files pinned to the top of the sidebar
+  showCostEstimates: true, // estimate per-reply cost from token counts and known model pricing
   updateCheck: true, // daily version check against GitHub Releases
   skippedUpdateVersion: '', // release the user chose to ignore
   developerMode: false,
@@ -378,6 +381,12 @@ function chatTimestamp(d = new Date()) {
 }
 
 /** List chats for a character, newest first: [{ file, metadata, messageCount, mtime, preview }] */
+// The chat list is rebuilt after every send/receive; without a cache that
+// re-reads and re-parses every conversation file each time. Entries are keyed
+// by mtime+size so any append or rewrite invalidates (mtime alone can collide
+// within one millisecond under rapid writes).
+const chatListCache = new Map(); // "CharName/file" -> {stamp, entry}
+
 export function listChats(characterName) {
   const dir = chatsDirFor(characterName);
   if (!fs.existsSync(dir)) return [];
@@ -385,6 +394,14 @@ export function listChats(characterName) {
   for (const file of fs.readdirSync(dir)) {
     if (!file.endsWith('.jsonl')) continue;
     try {
+      const st = fs.statSync(path.join(dir, file));
+      const cacheKey = `${characterName}/${file}`;
+      const stamp = `${st.mtimeMs}:${st.size}`;
+      const cached = chatListCache.get(cacheKey);
+      if (cached?.stamp === stamp) {
+        out.push(cached.entry);
+        continue;
+      }
       const lines = fs
         .readFileSync(path.join(dir, file), 'utf8')
         .split('\n')
@@ -396,13 +413,15 @@ export function listChats(characterName) {
           preview = (JSON.parse(lines[lines.length - 1]).mes ?? '').slice(0, 120);
         } catch {}
       }
-      out.push({
+      const entry = {
         file,
         metadata,
         messageCount: Math.max(0, lines.length - 1),
-        mtime: fs.statSync(path.join(dir, file)).mtimeMs,
+        mtime: st.mtimeMs,
         preview,
-      });
+      };
+      chatListCache.set(cacheKey, { stamp, entry });
+      out.push(entry);
     } catch {}
   }
   out.sort((a, b) => b.mtime - a.mtime);

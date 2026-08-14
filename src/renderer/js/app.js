@@ -18,6 +18,7 @@ import {
   openSearch,
   regenerateLast,
   stopGeneration,
+  cycleConversation,
 } from './views/chat.js';
 import { initCharacters, renderCharacters } from './views/characters.js';
 import { initCharacterEditor, openCharacterEditor } from './views/characterEditor.js';
@@ -255,6 +256,12 @@ function bindShortcuts() {
       if (isCurrentChatGenerating() && !document.querySelector('.modal-overlay')) stopGeneration();
       return;
     }
+    // Ctrl+Tab / Ctrl+Shift+Tab: next / previous conversation
+    if (e.key === 'Tab' && e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      cycleConversation(e.shiftKey ? -1 : 1);
+      return;
+    }
     if (!mod) return;
     const inChat = state.view === 'chat';
     const key = e.key.toLowerCase();
@@ -342,7 +349,7 @@ async function main() {
     reloadPresets,
     reloadAll,
     applyAppearance,
-    globalSearch: (q) => openSearch(q),
+    globalSearch: (q) => openSearch(q, 'all'), // sidebar search spans every conversation
     openSettings: (sectionId) => {
       showSettingsSection(sectionId);
       navigate('settings');

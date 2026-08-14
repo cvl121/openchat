@@ -303,6 +303,8 @@ input[type='checkbox'] {
   margin-left: 4px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.chat-meta .meta-link { cursor: pointer; text-decoration: underline dotted; }
+.chat-meta .meta-link:hover { color: var(--text); }
 .chat-toolbar .model-chip {
   font-size: 11px; color: var(--text-dim);
   background: var(--bg-input);
