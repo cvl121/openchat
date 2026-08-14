@@ -521,26 +521,19 @@ export function renderChat({ scrollBottom = false } = {}) {
   let prevScroll = null;
   if (prevMessages) {
     const top = prevMessages.scrollTop;
-    prevScroll = {
-      top,
-      nearBottom: prevMessages.scrollHeight - top - prevMessages.clientHeight < 160,
-      anchorIndex: null,
-      anchorOffset: 0,
-    };
+    prevScroll = { top, anchorIndex: null, anchorOffset: 0 };
     // Anchor the restore to the first visible message, not a pixel offset:
     // content-visibility only estimates offscreen heights on a rebuild, so a
     // raw scrollTop gets clamped against the too-small scrollHeight and the
-    // view lands near the top of long chats.
-    if (!prevScroll.nearBottom) {
-      // First message whose TOP is inside the viewport: positioning by its
-      // top keeps its own height estimate out of the equation, so it can't
-      // drift when the real height replaces the 90px placeholder.
-      for (const child of prevMessages.children) {
-        if (child.dataset?.index != null && child.offsetTop >= top) {
-          prevScroll.anchorIndex = child.dataset.index;
-          prevScroll.anchorOffset = child.offsetTop - top;
-          break;
-        }
+    // view lands near the top of long chats. First message whose TOP is
+    // inside the viewport: positioning by its top keeps its own height
+    // estimate out of the equation, so it can't drift when the real height
+    // replaces the 90px placeholder.
+    for (const child of prevMessages.children) {
+      if (child.dataset?.index != null && child.offsetTop >= top) {
+        prevScroll.anchorIndex = child.dataset.index;
+        prevScroll.anchorOffset = child.offsetTop - top;
+        break;
       }
     }
   }
@@ -720,10 +713,22 @@ export function renderChat({ scrollBottom = false } = {}) {
     '↓'
   );
   root.append(scrollBtn);
+  // Intent tracking, not proximity: our own scrolls only ever move DOWN to
+  // the bottom, so any upward movement is the user — unfollow immediately,
+  // with no distance threshold (one slow wheel notch is enough; the old
+  // 160px "near bottom" zone made streaming chunks yank slow scrollers back
+  // to the bottom until they scrolled fast enough to escape it). Re-follow
+  // only when the user themselves reaches the bottom.
+  let lastScrollTop = messagesEl.scrollTop;
+  messagesEl.addEventListener('wheel', (e) => {
+    if (e.deltaY < 0) followingBottom = false;
+  }, { passive: true });
   messagesEl.addEventListener('scroll', () => {
     const distance = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
     scrollBtn.classList.toggle('visible', distance > 300);
-    followingBottom = distance < 160;
+    if (messagesEl.scrollTop < lastScrollTop) followingBottom = false;
+    else if (distance < 2) followingBottom = true;
+    lastScrollTop = messagesEl.scrollTop;
   });
   // While following the newest message, any growth in a message re-anchors
   // the view: streamed text, attachment images finishing their async load,
@@ -889,7 +894,7 @@ export function renderChat({ scrollBottom = false } = {}) {
   updateDraftTokens();
   // Restore scroll unless explicitly jumping (chat switch) or the user was
   // already following the bottom.
-  if (scrollBottom || !prevScroll || prevScroll.nearBottom || followingBottom) {
+  if (scrollBottom || !prevScroll || followingBottom) {
     scrollToBottom(true);
     // Right after a rebuild, layout keeps settling for a few frames (image
     // decode, content-visibility estimates). Hold the anchor while it does;
@@ -1091,8 +1096,9 @@ function lastAssistantIndex() {
 function scrollToBottom(force) {
   const elMessages = document.getElementById('messages');
   if (!elMessages) return;
-  const nearBottom = elMessages.scrollHeight - elMessages.scrollTop - elMessages.clientHeight < 160;
-  if (force || nearBottom) {
+  // Non-forced calls (streaming chunks) follow the user's intent, never
+  // their proximity — a user who scrolled up stays where they are
+  if (force || followingBottom) {
     elMessages.scrollTop = elMessages.scrollHeight;
     followingBottom = true;
   }
