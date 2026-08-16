@@ -73,7 +73,7 @@ jobs:
 
   # macOS signing runs in its own job bound to the release-signing
   # environment: the Developer ID secrets live there (not repo-wide), and the
-  # environment's protection rules gate the job behind manual approval.
+  # environment only admits runs from main or v* tags.
   build-mac:
     runs-on: macos-latest
     environment: release-signing
