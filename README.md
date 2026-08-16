@@ -154,6 +154,20 @@ npm start
 
 Settings → Data → **Import Data Folder**: select an existing OpenChat data folder (same layout — `characters/`, `chats/`, `worlds/`, `presets/`, `user/`) and its characters, chats, world books, presets, and personas are copied over.
 
+## FAQ
+
+**Which provider should I start with?** OpenRouter — one key gives you hundreds of models (including some free ones), a live searchable model list, and a credit-balance display. If you'd rather not use any cloud service, install [Ollama](https://ollama.ai) and chat with local models for free.
+
+**What does OpenChat cost?** The app is free and open source. Cloud providers bill you directly for what you use through your own API key; nothing goes through us.
+
+**Is my chat data private?** Everything is stored on your machine (see [Data Storage](#data-storage)). Messages are sent only to the provider you configured, and API keys are encrypted at rest where the OS supports it. See the Local-first bullet above for the two other network calls the app makes.
+
+**Can I use it offline?** Yes — with Ollama or any local OpenAI-compatible server. Cloud providers need a connection.
+
+**How do I move to a new machine?** Copy your data folder over, then Settings → Data → Import Data Folder. API keys are not part of the import (they're encrypted per-machine) — re-enter them once.
+
+**Connection problems?** Use Settings → API → Test Connection. For Ollama, make sure `ollama serve` is running. For custom servers, the base URL should be the `/v1`-style root (e.g. `http://localhost:1234/v1`).
+
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
@@ -207,6 +221,8 @@ Contributions are welcome, with one ground rule up front: **pull requests are by
 2. **Want to submit code?** Open an issue first describing the change you have in mind. If it's a good fit, we'll discuss the approach there and invite you to contribute.
 3. **Before a PR**: keep changes dependency-free (plain JavaScript, no build step, no framework, no runtime dependencies), match the surrounding code style, and make sure `npm test` passes. Tests run on every pull request and on pushes to main.
 4. **Translations**: the UI is localized via plain-JS dictionaries in `src/shared/locales/` (one flat `'key': 'string'` file per language, English as the source of truth). Fixing a translation is a normal code change; proposing a new language starts with an issue. A test enforces that every locale has exactly the English key set with all `{placeholders}` intact, so `npm test` will catch mistakes.
+5. **Good first contributions**: translation fixes, bug reports with clear reproduction steps, and documentation improvements are the easiest ways to get involved — and the fastest route to a contributor invitation.
+6. **Code conventions**: user-facing text never lives in components — add a key to `src/shared/locales/en.js` (and every other locale) and reference it with `t('key')`. Build DOM through the `el()` helper in `src/renderer/js/util.js` rather than `innerHTML`. New behavior should come with a unit test in `tests/`.
 
 ### Development
 
@@ -218,6 +234,8 @@ npm test      # run the unit tests (node --test)
 ```
 
 Layout: `src/main/` is the Electron main process (LLM providers in `llm.js`, disk layer in `storage.js`, IPC surface in `ipc.js`), `src/renderer/` is the UI (views in `js/views/`, prompt assembly in `js/promptBuilder.js`), and `src/shared/` is code used by both sides (provider registry, i18n runtime and locale dictionaries, text helpers).
+
+Debugging tips: switch to Advanced mode and open Settings → Developer for a live log of every API request and response; app data (including chat JSONL you can inspect directly) lives in the user-data directory listed under [Data Storage](#data-storage); the unit tests run in about a second, so `npm test` after every change is cheap.
 
 ## License
 
