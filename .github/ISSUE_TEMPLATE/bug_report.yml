@@ -1,0 +1,55 @@
+name: Bug report
+description: Something is broken or behaving unexpectedly
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: OpenChat version
+      description: Shown in Settings → General.
+      placeholder: 0.9.0
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: macOS 15.5 (Apple Silicon) / Windows 11 / Ubuntu 24.04
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: AI provider (if relevant)
+      options:
+        - Not provider-related
+        - OpenRouter
+        - OpenAI
+        - Anthropic Claude
+        - Google Gemini
+        - DeepSeek
+        - Kimi
+        - Qwen
+        - Ollama
+        - Custom (OpenAI-compatible)
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: What did you do, what did you expect, what happened instead?
+      placeholder: |
+        1. Open …
+        2. Click …
+        3. Expected … but got …
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots (optional)
+      description: >-
+        For API problems, Advanced mode → Settings → Developer shows a live
+        request/response log. Redact API keys and anything personal before
+        pasting.

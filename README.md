@@ -4,7 +4,7 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPLv3-blue.svg)](LICENSE)
 [![Status: Beta](https://img.shields.io/badge/status-beta-orange.svg)](https://github.com/cvl121/openchat/releases)
 
-> **OpenChat is in beta.** It's stable for daily use, but expect rough edges and occasional breaking changes before 1.0.
+> **OpenChat is in beta.** It's stable for daily use, but expect rough edges and occasional breaking changes before 1.0. The project currently has a single maintainer, who plans to ship updates at least monthly and at most weekly.
 
 **OpenChat** — a fast, local-first, open-source desktop AI chat app with two personalities: a clean general-purpose assistant chat, and a full story/role-play environment inspired by [SillyTavern](https://github.com/SillyTavern/SillyTavern).
 
@@ -213,7 +213,9 @@ These features were left out for now to keep OpenChat focused on core functional
 
 ## Contributing
 
-Contributions are welcome, with one ground rule up front: **pull requests are by invitation**. To keep the project maintainable, PRs are only accepted from approved contributors, and PRs from other accounts are closed automatically — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions are welcome, with one ground rule up front: **pull requests are by invitation**. To keep the project maintainable, PRs are only accepted from approved contributors, and PRs from other accounts are closed automatically — see [CONTRIBUTING.md](CONTRIBUTING.md). OpenChat has a single maintainer for now, so allow a few days for responses to issues.
+
+Found a security vulnerability? Please report it privately — see [SECURITY.md](SECURITY.md).
 
 **How to contribute:**
 

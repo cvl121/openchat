@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest an improvement or new capability
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the situation where you miss this feature.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How do you imagine it working? Rough ideas are fine.
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Which mode does this concern?
+      options:
+        - Both / not mode-specific
+        - Chat mode (assistant)
+        - Story mode (role-play)
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered (optional)
+      description: >-
+        Workarounds you use today, or how other apps (e.g. SillyTavern) handle
+        it. Note that some features are deliberately out of scope — see the
+        "Not (Yet) Implemented" list in the README.

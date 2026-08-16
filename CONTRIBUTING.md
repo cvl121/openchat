@@ -15,5 +15,16 @@ If you'd like to contribute:
 
 ## Bug reports
 
-Bug reports are always welcome — please include your OS, the OpenChat version,
-and steps to reproduce.
+Bug reports are always welcome — the issue form asks for your OS, the OpenChat
+version (Settings → General), and steps to reproduce.
+
+## Security vulnerabilities
+
+Please report vulnerabilities privately via
+[GitHub's private vulnerability reporting](https://github.com/cvl121/openchat/security/advisories/new),
+not the public issue tracker — see [SECURITY.md](SECURITY.md).
+
+## Pace
+
+OpenChat currently has a single maintainer. Releases ship at least monthly
+(at most weekly), and responses to issues can take a few days.
