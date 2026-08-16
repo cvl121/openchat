@@ -31,6 +31,7 @@ Your data stays compatible: character PNGs, world-info JSON, chat JSONL, and pre
 ## Highlights
 
 - **Two app modes** — **Chat** (the default) is a straightforward AI assistant with conversation history, file uploads, and image responses. **Story** unlocks role-playing with character cards, personas, world lore, swipes, and story tools. Switch anytime in Settings → General.
+- **Speaks your language** — the entire UI is available in **English, Spanish, Simplified Chinese, and Japanese**. It follows your system language automatically, or pick one in Settings → General → Language. Dates, relative times, search, and token counting are locale-aware, and the app menu switches too.
 - **Bring your own key — or none** — designed primarily around **OpenRouter** (one key, hundreds of models, live searchable model list), with OpenAI, Anthropic Claude, Google Gemini, DeepSeek, Kimi, Qwen, local **Ollama** (no key, runs on your machine), and any **custom OpenAI-compatible server** (LM Studio, vLLM, llama.cpp, Groq, Together, …) also supported.
 - **Attachments & images** — attach images and text files to messages (multimodal models see the images; text files are inlined), and image-capable models can reply with images that are saved locally.
 - **Local-first** — characters, chats, settings, and API keys never leave your machine except as requests to your chosen AI provider. The only other network call is an optional once-a-day version check against GitHub Releases (Settings → General).
@@ -68,7 +69,7 @@ Chat mode keeps the sidebar as a simple conversation list (rename, export, delet
 - **Branching** — fork any message into a new chat file; the original stays untouched in History
 - **Quick model switcher** — click the model chip in the toolbar to search the provider's model list or jump back to a recent model, without a trip to Settings
 - **Chat history** — every conversation auto-saves per character; switch, export, or delete past chats from the history picker; import SillyTavern/OpenChat `.jsonl` chats. Deletions go to the OS trash, not straight to oblivion
-- **Unified search** — search the current conversation or all chats from one dialog; results jump straight to the matching message
+- **Unified search** — search the current conversation or all chats from one dialog; matching is case- and accent-insensitive ("jose" finds "José"), and results jump straight to the matching message
 - **Tavern-flavored markdown** — `"dialogue"` (including CJK quoting: `「…」`, `『…』`, `“…”`), `*actions*`, and narrative text each get their own color; headers, bold, blockquotes, lists, tables, strikethrough, and rules are supported, with all input HTML-escaped
 - **Links & code** — markdown and bare URLs open safely in your browser (http/https only); fenced code blocks get language-aware syntax highlighting (JS/TS, Python, JSON, Bash, CSS, HTML) and a one-click copy button — still zero dependencies
 - **Update notifications** — a daily check against GitHub Releases shows a banner when a new version is out (toggle or run manually in Settings → General; no data about you is sent)
@@ -126,7 +127,7 @@ Regular mode is the default — everything works out of the box with sensible pa
 | [DeepSeek](https://platform.deepseek.com) | API key | DeepSeek V3 (`deepseek-chat`) and R1 (`deepseek-reasoner`). |
 | [Kimi](https://platform.moonshot.ai) | API key | Moonshot AI's Kimi K2 family. Defaults to the international endpoint; mainland-China users can point the Advanced base-URL override at `https://api.moonshot.cn/v1`. |
 | [Qwen](https://modelstudio.console.alibabacloud.com) | API key | Alibaba Model Studio (DashScope). Defaults to the international endpoint; mainland-China users can override the base URL to `https://dashscope.aliyuncs.com/compatible-mode/v1`. |
-| [Ollama](https://ollama.ai) | Local install | No key needed; native Ollama API, so Context Size is passed through as `num_ctx`. |
+| [Ollama](https://ollama.ai) | Local install | No key needed; native Ollama API, so Context Size passes through as `num_ctx`, and typical-p, TFS, and Mirostat samplers are supported. |
 | Custom (OpenAI-compatible) | A server URL | LM Studio, vLLM, llama.cpp, Groq, Together, DeepSeek, Mistral, xAI, proxies… Point it at the `/v1`-style root; key optional. |
 
 All requests run in the Electron main process (no CORS issues) and stream. Rate limits and server errors retry automatically with backoff; a stalled stream times out after two minutes. OpenAI reasoning models (o-series, GPT-5) get their parameter quirks (`max_completion_tokens`, fixed temperature) handled for you. Use **Settings → API → Test Connection** to verify a key with a tiny request.
@@ -192,9 +193,18 @@ These features were left out for now to keep OpenChat focused on core functional
 - NovelAI text provider
 - Per-conversation chat style overrides (global styling is supported)
 
-## Contributing & Development
+## Contributing
 
-OpenChat is deliberately small: plain JavaScript, no build step, no framework, one dependency (Electron). To hack on it:
+Contributions are welcome, with one ground rule up front: **pull requests are by invitation**. To keep the project maintainable, PRs are only accepted from approved contributors, and PRs from other accounts are closed automatically — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+**How to contribute:**
+
+1. **Report bugs or request features** on the [issue tracker](https://github.com/cvl121/openchat/issues). For bugs, include your OS, the OpenChat version (Settings → General), and steps to reproduce.
+2. **Want to submit code?** Open an issue first describing the change you have in mind. If it's a good fit, we'll discuss the approach there and invite you to contribute.
+3. **Before a PR**: keep changes dependency-free (plain JavaScript, no build step, no framework — Electron is the only dependency), match the surrounding code style, and make sure `npm test` passes. Tests run on every push and pull request.
+4. **Translations**: the UI is localized via plain-JS dictionaries in `src/shared/locales/` (one flat `'key': 'string'` file per language, English as the source of truth). Fixing a translation is a normal code change; proposing a new language starts with an issue. A test enforces that every locale has exactly the English key set with all `{placeholders}` intact, so `npm test` will catch mistakes.
+
+### Development
 
 ```bash
 git clone https://github.com/cvl121/openchat && cd openchat
@@ -203,9 +213,7 @@ npm start     # run the app
 npm test      # run the unit tests (node --test)
 ```
 
-Layout: `src/main/` is the Electron main process (LLM providers in `llm.js`, disk layer in `storage.js`, IPC surface in `ipc.js`), `src/renderer/` is the UI (views in `js/views/`, prompt assembly in `js/promptBuilder.js`). Tests live in `tests/` and run on every push and pull request.
-
-Bug reports and feature requests are welcome on the [issue tracker](https://github.com/cvl121/openchat/issues). **Pull requests are by invitation**: please open an issue first to discuss your change — see [CONTRIBUTING.md](CONTRIBUTING.md). Contributions should stay dependency-free and pass `npm test`.
+Layout: `src/main/` is the Electron main process (LLM providers in `llm.js`, disk layer in `storage.js`, IPC surface in `ipc.js`), `src/renderer/` is the UI (views in `js/views/`, prompt assembly in `js/promptBuilder.js`), and `src/shared/` is code used by both sides (provider registry, i18n runtime and locale dictionaries, text helpers).
 
 ## License
 
