@@ -13,8 +13,7 @@ Please report vulnerabilities **privately** via
 — do not open a public issue.
 
 OpenChat has a single maintainer. You should normally get an acknowledgment
-within a week; verified issues are fixed in the next release (the project
-ships at least monthly).
+within a week; verified issues are prioritized for the next release.
 
 ## Scope
 

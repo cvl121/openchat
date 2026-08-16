@@ -4,7 +4,7 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPLv3-blue.svg)](LICENSE)
 [![Status: Beta](https://img.shields.io/badge/status-beta-orange.svg)](https://github.com/cvl121/openchat/releases)
 
-> **OpenChat is in beta.** It's stable for daily use, but expect rough edges and occasional breaking changes before 1.0. The project currently has a single maintainer, who plans to ship updates at least monthly and at most weekly.
+> **OpenChat is in beta.** It's stable for daily use, but expect rough edges and occasional breaking changes before 1.0. The project currently has a single maintainer, who aims to ship updates roughly every one to four weeks on a best-effort basis.
 
 **OpenChat** — a fast, local-first, open-source desktop AI chat app with two personalities: a clean general-purpose assistant chat, and a full story/role-play environment inspired by [SillyTavern](https://github.com/SillyTavern/SillyTavern).
 

@@ -26,5 +26,6 @@ not the public issue tracker — see [SECURITY.md](SECURITY.md).
 
 ## Pace
 
-OpenChat currently has a single maintainer. Releases ship at least monthly
-(at most weekly), and responses to issues can take a few days.
+OpenChat currently has a single maintainer. Releases aim for roughly every
+one to four weeks on a best-effort basis, and responses to issues can take a
+few days.
