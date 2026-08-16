@@ -1,0 +1,25 @@
+name: PR gate
+
+on:
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    # The owner and invited collaborators pass automatically; add any extra
+    # trusted GitHub usernames to the second list.
+    if: |
+      !contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association) &&
+      !contains(fromJSON('["cvl121"]'), github.event.pull_request.user.login)
+    steps:
+      - run: |
+          gh pr close "$PR" --repo "$REPO" --comment \
+            "Thanks for your interest in OpenChat! This repository only accepts pull requests from approved contributors. Please open an issue first to discuss your change — if it is a good fit, we will invite you to contribute."
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
