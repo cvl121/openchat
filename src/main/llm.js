@@ -6,62 +6,10 @@
 // OpenAI-compatible servers. All but Claude/Gemini/Ollama share the
 // OpenAI-compatible chat/completions wire format.
 
-export const PROVIDERS = {
-  openrouter: {
-    label: 'OpenRouter',
-    baseURL: 'https://openrouter.ai/api/v1',
-    requiresKey: true,
-    defaultModel: 'google/gemini-3.1-pro-preview',
-  },
-  openai: {
-    label: 'OpenAI',
-    baseURL: 'https://api.openai.com/v1',
-    requiresKey: true,
-    defaultModel: 'gpt-4o-mini',
-  },
-  claude: {
-    label: 'Anthropic Claude',
-    baseURL: 'https://api.anthropic.com/v1',
-    requiresKey: true,
-    defaultModel: 'claude-sonnet-4-6',
-  },
-  gemini: {
-    label: 'Google Gemini',
-    baseURL: 'https://generativelanguage.googleapis.com/v1beta',
-    requiresKey: true,
-    defaultModel: 'gemini-3.1-pro-preview',
-  },
-  deepseek: {
-    label: 'DeepSeek',
-    baseURL: 'https://api.deepseek.com/v1',
-    requiresKey: true,
-    defaultModel: 'deepseek-chat',
-  },
-  kimi: {
-    label: 'Kimi (Moonshot AI)',
-    baseURL: 'https://api.moonshot.ai/v1',
-    requiresKey: true,
-    defaultModel: 'kimi-latest',
-  },
-  qwen: {
-    label: 'Qwen (Alibaba)',
-    baseURL: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
-    requiresKey: true,
-    defaultModel: 'qwen-plus',
-  },
-  ollama: {
-    label: 'Ollama (local)',
-    baseURL: 'http://localhost:11434/v1',
-    requiresKey: false,
-    defaultModel: 'llama3.1',
-  },
-  custom: {
-    label: 'Custom (OpenAI-compatible)',
-    baseURL: '',
-    requiresKey: false,
-    defaultModel: '',
-  },
-};
+import { PROVIDERS } from '../shared/providers.js';
+import { t } from '../shared/i18n.js';
+
+export { PROVIDERS };
 
 // Reference list prices in USD per million tokens {inPerM, outPerM}, used for
 // providers whose model-list API doesn't report pricing (only OpenRouter does).
@@ -326,6 +274,11 @@ function ollamaBody(messages, config, stream) {
       ...(p.top_k > 0 ? { top_k: p.top_k } : {}),
       ...(p.min_p > 0 ? { min_p: p.min_p } : {}),
       ...(p.repetition_penalty !== 1.0 ? { repeat_penalty: p.repetition_penalty } : {}),
+      ...(p.typical_p != null && p.typical_p !== 1.0 ? { typical_p: p.typical_p } : {}),
+      ...(p.tfs != null && p.tfs !== 1.0 ? { tfs_z: p.tfs } : {}),
+      ...(p.mirostat_mode > 0
+        ? { mirostat: p.mirostat_mode, mirostat_tau: p.mirostat_tau, mirostat_eta: p.mirostat_eta }
+        : {}),
       ...(p.seed >= 0 ? { seed: p.seed } : {}),
       ...(p.stop_sequences?.length ? { stop: p.stop_sequences } : {}),
     },
@@ -355,7 +308,7 @@ function buildRequest(messages, config, stream) {
     case 'qwen':
     case 'custom':
       if (config.provider === 'custom' && !base) {
-        throw new LLMError('Custom provider needs a base URL — set one in Settings → API');
+        throw new LLMError(t('errors.customNeedsBaseURL'));
       }
       return {
         url: `${base}/chat/completions`,
@@ -467,7 +420,7 @@ function buildRequest(messages, config, stream) {
     }
 
     default:
-      throw new LLMError(`Unknown provider: ${config.provider}`);
+      throw new LLMError(t('errors.unknownProvider', { provider: config.provider }));
   }
 }
 
@@ -697,7 +650,7 @@ async function attemptSend(req, config, stream, { onChunk, onImage, onFinishReas
       const body = await readErrorBody(response);
       const retryAfter = Number(response.headers.get('retry-after'));
       throw new LLMError(
-        `${PROVIDERS[config.provider]?.label ?? config.provider} error (${response.status}): ${body}`,
+        t('errors.providerError', { label: PROVIDERS[config.provider]?.label ?? config.provider, status: response.status, body }),
         {
           status: response.status,
           body,
@@ -743,7 +696,7 @@ async function attemptSend(req, config, stream, { onChunk, onImage, onFinishReas
     return full;
   } catch (err) {
     if (idledOut) {
-      throw new LLMError('The connection stalled — no data received for 2 minutes', { status: 0 });
+      throw new LLMError(t('errors.connectionStalled'), { status: 0 });
     }
     throw err;
   } finally {
@@ -859,7 +812,7 @@ export async function listModels(config) {
   } catch (err) {
     if (err instanceof LLMError && (err.status === 401 || err.status === 403)) {
       const label = PROVIDERS[config.provider]?.label ?? config.provider;
-      throw new LLMError(`${label} rejected the API key (HTTP ${err.status}) — check it in Settings → API`, {
+      throw new LLMError(t('errors.keyRejected', { label, status: err.status }), {
         status: err.status,
       });
     }
@@ -876,7 +829,7 @@ export async function getCredits(config) {
   const res = await fetch(`${effectiveBaseURL(config)}/credits`, {
     headers: { Authorization: `Bearer ${config.apiKey}` },
   });
-  if (!res.ok) throw new LLMError(`Could not fetch credits (HTTP ${res.status})`, { status: res.status });
+  if (!res.ok) throw new LLMError(t('errors.creditsFailed', { status: res.status }), { status: res.status });
   const { data } = await res.json();
   const total = data?.total_credits ?? 0;
   const used = data?.total_usage ?? 0;

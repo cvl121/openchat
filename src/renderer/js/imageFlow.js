@@ -9,6 +9,8 @@
 // 2. Mistyped model IDs surface as raw provider errors mid-chat; pointing at
 //    the right settings screen turns a dead end into a fix.
 
+import { t } from '../../shared/i18n.js';
+
 /** A response that is nothing but image-placeholder tokens and whitespace. */
 const IMAGE_PLACEHOLDER_RE = /^(?:\s*(?:<image>|\[image\]|<img\s*\/?>))+\s*$/i;
 
@@ -31,15 +33,15 @@ export function imageFollowupAction(text, { hasImages = false, imageGenEnabled =
   return 'hint';
 }
 
-export const IMAGE_HINT_MESSAGE =
-  'The chat model tried to answer with an image it cannot produce here. ' +
-  'Enable Image Generation in Settings and use the 🎨 button, or rephrase your request.';
+export function imageHintMessage() {
+  return t('chat.imageHint');
+}
 
 /** Append a where-to-fix-it pointer to unknown-model provider errors. */
 export function decorateModelError(message, { imageTurn = false } = {}) {
   if (/not a valid model|model.{0,20}not.{0,10}(?:found|exist)|unknown model/i.test(message ?? '')) {
-    const where = imageTurn ? 'Image Model in Settings → Image Generation' : 'model in Settings → API';
-    return `${message} — check the ${where}.`;
+    const where = imageTurn ? t('chat.whereImageModel') : t('chat.whereChatModel');
+    return t('chat.checkModelSuffix', { msg: message, where });
   }
   return message;
 }

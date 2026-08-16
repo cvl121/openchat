@@ -535,6 +535,11 @@ test('ollama uses the native /api/chat with num_ctx and NDJSON streaming', async
   try {
     const cfg = config(server, { provider: 'ollama', apiKey: '' });
     cfg.params.context_size = 8192;
+    cfg.params.typical_p = 0.9;
+    cfg.params.tfs = 0.95;
+    cfg.params.mirostat_mode = 2;
+    cfg.params.mirostat_tau = 5;
+    cfg.params.mirostat_eta = 0.1;
     const chunks = [];
     let reason = null;
     const full = await sendMessage(
@@ -549,6 +554,12 @@ test('ollama uses the native /api/chat with num_ctx and NDJSON streaming', async
     assert.ok(server.lastRequest.url.endsWith('/api/chat'));
     assert.equal(server.lastRequest.body.options.num_ctx, 8192);
     assert.equal(server.lastRequest.body.options.num_predict, 128);
+    // Ollama-only samplers pass through under their native names
+    assert.equal(server.lastRequest.body.options.typical_p, 0.9);
+    assert.equal(server.lastRequest.body.options.tfs_z, 0.95);
+    assert.equal(server.lastRequest.body.options.mirostat, 2);
+    assert.equal(server.lastRequest.body.options.mirostat_tau, 5);
+    assert.equal(server.lastRequest.body.options.mirostat_eta, 0.1);
     assert.deepEqual(server.lastRequest.body.messages[0].images, ['QUJD']);
   } finally {
     server.close();

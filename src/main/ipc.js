@@ -8,6 +8,7 @@ import * as storage from './storage.js';
 import * as stImport from './stImport.js';
 import * as llm from './llm.js';
 import { checkForUpdate } from './updates.js';
+import { t } from '../shared/i18n.js';
 
 const activeRequests = new Map(); // requestId -> AbortController
 
@@ -25,7 +26,7 @@ function assertMinted(p) {
   for (const minted of mintedPaths) {
     if (resolved === minted || resolved.startsWith(minted + path.sep)) return resolved;
   }
-  throw new Error('Path was not selected via a file dialog or drag-and-drop');
+  throw new Error(t('errors.pathNotMinted'));
 }
 
 function wrap(handler) {
@@ -213,7 +214,8 @@ export function registerIPC() {
       flushChunks();
       const aborted = err.name === 'AbortError' || controller.signal.aborted;
       send('llm:error', { requestId, error: err.message ?? String(err), aborted });
-      return { ok: !aborted ? false : true, error: err.message };
+      // A user-initiated stop is a normal outcome, not a failure
+      return { ok: aborted, error: err.message };
     } finally {
       activeRequests.delete(requestId);
     }
@@ -262,7 +264,7 @@ export function registerIPC() {
     })
   );
   ipcMain.handle('misc:openExternal', wrap((url) => {
-    if (!/^https?:\/\//.test(url)) throw new Error('Only http(s) URLs may be opened');
+    if (!/^https?:\/\//.test(url)) throw new Error(t('errors.httpOnly'));
     return shell.openExternal(url);
   }));
   ipcMain.handle('misc:dataDir', wrap(() => storage.dataDir()));

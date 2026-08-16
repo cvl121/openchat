@@ -9,7 +9,7 @@ import {
   isImagePlaceholder,
   imageFollowupAction,
   decorateModelError,
-  IMAGE_HINT_MESSAGE,
+  imageHintMessage,
 } from '../src/renderer/js/imageFlow.js';
 
 test('isImagePlaceholder: bare placeholder tokens in any casing or repetition', () => {
@@ -59,8 +59,8 @@ test('imageFollowupAction: placeholder without image → reroute when enabled, o
 });
 
 test('hint message tells the user what to do', () => {
-  assert.match(IMAGE_HINT_MESSAGE, /Image Generation/);
-  assert.match(IMAGE_HINT_MESSAGE, /🎨/);
+  assert.match(imageHintMessage(), /Image Generation/);
+  assert.match(imageHintMessage(), /🎨/);
 });
 
 test('decorateModelError: unknown-model errors point at the right settings', () => {

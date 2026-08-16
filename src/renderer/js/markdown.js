@@ -10,6 +10,7 @@
 // inline handlers, so clicks are handled by one delegated listener below.
 
 import { escapeHtml } from './util.js';
+import { t } from '../../shared/i18n.js';
 
 // Values interpolated into single-quoted attributes; input is already
 // entity-escaped, so only quotes need handling here.
@@ -229,7 +230,7 @@ export function renderMarkdown(raw) {
     html.push(
       `<div class='md-code'>` +
         `<div class='md-code-head'><span class='md-code-lang'>${lang}</span>` +
-        `<button class='md-code-copy' type='button' aria-label='Copy code'>Copy</button></div>` +
+        `<button class='md-code-copy' type='button' aria-label='${t('chat.copyCode')}'>${t('common.copy')}</button></div>` +
         `<pre><code${lang ? ` class='md-lang-${lang}'` : ''}>${body}</code></pre></div>`
     );
     codeLines = [];
@@ -344,10 +345,10 @@ if (typeof document !== 'undefined') {
       const code = btn.closest('.md-code')?.querySelector('code');
       if (!code) return;
       navigator.clipboard?.writeText?.(code.textContent ?? '');
-      btn.textContent = 'Copied';
+      btn.textContent = t('common.copied');
       btn.classList.add('copied');
       setTimeout(() => {
-        btn.textContent = 'Copy';
+        btn.textContent = t('common.copy');
         btn.classList.remove('copied');
       }, 1500);
     }

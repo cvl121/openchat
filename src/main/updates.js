@@ -1,6 +1,7 @@
 // Update check against GitHub Releases. This only discovers a newer version
 // and hands the release URL to the UI — no downloads, no auto-install.
 // Electron-free (like storage.js) so it can be tested under plain Node.
+import { t } from '../shared/i18n.js';
 
 export const RELEASES_API = 'https://api.github.com/repos/cvl121/openchat/releases/latest';
 export const RELEASES_PAGE = 'https://github.com/cvl121/openchat/releases/latest';
@@ -35,6 +36,6 @@ export async function checkForUpdate({ currentVersion, skippedVersion = '', fetc
     headers: { Accept: 'application/vnd.github+json' },
     signal: AbortSignal.timeout(15_000),
   });
-  if (!res.ok) throw new Error(`Update check failed (HTTP ${res.status})`);
+  if (!res.ok) throw new Error(t('errors.updateCheckFailed', { status: res.status }));
   return evaluateRelease(await res.json(), { currentVersion, skippedVersion });
 }

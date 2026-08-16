@@ -89,6 +89,10 @@ contextBridge.exposeInMainWorld('tavern', {
   updates: {
     check: () => invoke('updates:check'),
   },
+  i18n: {
+    // Keep the main process (menu, error messages) on the renderer's locale
+    setLocale: (code) => ipcRenderer.send('i18n:setLocale', code),
+  },
   sillytavern: {
     scan: (dir) => invoke('st:scan', dir),
     import: (dir, categories) => invoke('st:import', dir, categories),

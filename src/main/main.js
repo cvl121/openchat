@@ -1,9 +1,10 @@
-import { app, BrowserWindow, protocol, net, Menu, shell, safeStorage, clipboard } from 'electron';
+import { app, BrowserWindow, protocol, net, Menu, shell, safeStorage, clipboard, ipcMain } from 'electron';
 import path from 'node:path';
 import url from 'node:url';
 import { initStorage, resolveDataPath, loadSettings, setTrashItem } from './storage.js';
 import { registerIPC } from './ipc.js';
 import { checkForUpdate } from './updates.js';
+import { t, setLocale, resolveLocale } from '../shared/i18n.js';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 
@@ -51,11 +52,11 @@ function attachContextMenu(win) {
         template.push({ label: suggestion, click: () => win.webContents.replaceMisspelling(suggestion) });
       }
       if (!params.dictionarySuggestions.length) {
-        template.push({ label: 'No Guesses Found', enabled: false });
+        template.push({ label: t('menu.noGuesses'), enabled: false });
       }
       template.push(
         {
-          label: 'Add to Dictionary',
+          label: t('menu.addToDictionary'),
           click: () => win.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
         },
         { type: 'separator' }
@@ -74,14 +75,14 @@ function attachContextMenu(win) {
       if (process.platform === 'darwin') {
         const preview = params.selectionText.trim().replace(/\s+/g, ' ');
         template.push({
-          label: `Look Up “${preview.length > 40 ? preview.slice(0, 40) + '…' : preview}”`,
+          label: t('menu.lookUp', { text: preview.length > 40 ? preview.slice(0, 40) + '…' : preview }),
           click: () => win.webContents.showDefinitionForSelection(),
         });
       }
     }
     if (params.linkURL) {
       if (template.length) template.push({ type: 'separator' });
-      template.push({ label: 'Copy Link', click: () => clipboard.writeText(params.linkURL) });
+      template.push({ label: t('menu.copyLink'), click: () => clipboard.writeText(params.linkURL) });
     }
     if (template.length) Menu.buildFromTemplate(template).popup({ window: win });
   });
@@ -97,7 +98,7 @@ function buildMenu() {
           submenu: [
             { role: 'about' },
             { type: 'separator' },
-            { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: send('menu:settings') },
+            { label: t('menu.settings'), accelerator: 'CmdOrCtrl+,', click: send('menu:settings') },
             { type: 'separator' },
             { role: 'hide' },
             { role: 'quit' },
@@ -105,25 +106,25 @@ function buildMenu() {
         }]
       : []),
     {
-      label: 'File',
+      label: t('menu.file'),
       submenu: [
-        { label: 'New Chat', accelerator: 'CmdOrCtrl+N', click: send('menu:newChat') },
-        { label: 'New Character', accelerator: 'CmdOrCtrl+Shift+N', click: send('menu:newCharacter') },
+        { label: t('menu.newChat'), accelerator: 'CmdOrCtrl+N', click: send('menu:newChat') },
+        { label: t('menu.newCharacter'), accelerator: 'CmdOrCtrl+Shift+N', click: send('menu:newCharacter') },
         { type: 'separator' },
-        ...(isMac ? [{ role: 'close' }] : [{ label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: send('menu:settings') }, { role: 'quit' }]),
+        ...(isMac ? [{ role: 'close' }] : [{ label: t('menu.settings'), accelerator: 'CmdOrCtrl+,', click: send('menu:settings') }, { role: 'quit' }]),
       ],
     },
     { role: 'editMenu' },
     {
-      label: 'Chat',
+      label: t('menu.chat'),
       submenu: [
-        { label: 'Search', accelerator: 'CmdOrCtrl+F', click: send('menu:search') },
-        { label: 'Chat History', accelerator: 'CmdOrCtrl+Shift+H', click: send('menu:history') },
-        { label: 'Regenerate Last Response', accelerator: 'CmdOrCtrl+R', click: send('menu:regenerate') },
+        { label: t('menu.search'), accelerator: 'CmdOrCtrl+F', click: send('menu:search') },
+        { label: t('menu.history'), accelerator: 'CmdOrCtrl+Shift+H', click: send('menu:history') },
+        { label: t('menu.regenerate'), accelerator: 'CmdOrCtrl+R', click: send('menu:regenerate') },
       ],
     },
     {
-      label: 'View',
+      label: t('menu.view'),
       submenu: [
         { role: 'togglefullscreen' },
         { role: 'resetZoom' },
@@ -173,8 +174,16 @@ app.whenReady().then(() => {
   });
   // Deletions go to the OS trash so misclicks are recoverable
   setTrashItem((p) => shell.trashItem(p));
+  // Menu labels and main-process error messages follow the UI language
+  const locale = resolveLocale(loadSettings().language, app.getLocale());
+  setLocale(locale);
   registerIPC();
   buildMenu();
+  // The renderer re-resolves the locale on startup and on setting changes
+  ipcMain.on('i18n:setLocale', (_event, code) => {
+    setLocale(code);
+    buildMenu();
+  });
 
   // URLs look like tavern://data/<path-within-data-dir>
   protocol.handle('tavern', (request) => {
@@ -188,7 +197,18 @@ app.whenReady().then(() => {
     }
   });
 
-  createWindow();
+  const win = createWindow();
+  // macOS spellchecks with the native, language-auto-detecting checker; on
+  // other platforms Chromium needs the dictionary named. Chinese/Japanese
+  // have no Chromium dictionaries — keep the default rather than clearing it.
+  if (process.platform !== 'darwin') {
+    const dictionaries = { en: ['en-US'], es: ['es'] }[locale];
+    if (dictionaries) {
+      try {
+        win.webContents.session.setSpellCheckerLanguages(dictionaries);
+      } catch {}
+    }
+  }
   startUpdateChecks();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

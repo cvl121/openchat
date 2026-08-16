@@ -19,6 +19,11 @@ import {
   normalizeCard,
   minimalPNG,
 } from './png.js';
+import { sanitizeFilename } from '../shared/filenames.js';
+import { foldText, truncateChars } from '../shared/text.js';
+import { t } from '../shared/i18n.js';
+
+export { sanitizeFilename };
 
 let DATA_DIR = null;
 
@@ -74,10 +79,6 @@ export function resolveDataPath(relPath) {
   return resolved;
 }
 
-export function sanitizeFilename(name) {
-  return name.replace(/[/\\:*?"<>|]/g, '_').trim() || 'Unnamed';
-}
-
 /**
  * Write a file atomically: write to a temp sibling, then rename over the target.
  * rename(2) is atomic within a filesystem, so a reader (or a crash) never sees a
@@ -123,6 +124,7 @@ export const DEFAULT_GENERATION_PARAMS = {
 
 export const DEFAULT_SETTINGS = {
   appMode: 'chat', // chat (general assistant) | roleplay (Story mode: characters, personas, lore)
+  language: 'system', // UI language: system | en | es | zh-CN | ja
   chatSystemPrompt: '', // chat-mode system prompt ('' = built-in default)
   requestImageOutput: false, // ask the chat model itself for image responses (advanced)
   // Dedicated image generation (🎨 button): provider '' = same as chat
@@ -306,7 +308,7 @@ export function saveCharacter(card, opts = {}) {
   if (!avatar) {
     avatar = fs.existsSync(full) ? fs.readFileSync(full) : minimalPNG();
   }
-  if (!isPNG(avatar)) throw new Error('Avatar must be a PNG image');
+  if (!isPNG(avatar)) throw new Error(t('errors.avatarMustBePNG'));
   writeFileAtomic(full, embedCharacterCard(avatar, card));
   if (previousName && previousName !== card.data.name) {
     migrateChats(previousName, card.data.name);
@@ -410,7 +412,8 @@ export function listChats(characterName) {
       let preview = '';
       if (lines.length > 1) {
         try {
-          preview = (JSON.parse(lines[lines.length - 1]).mes ?? '').slice(0, 120);
+          // Code-point truncation: .slice could split an astral CJK char/emoji
+          preview = truncateChars(JSON.parse(lines[lines.length - 1]).mes ?? '', 120);
         } catch {}
       }
       const entry = {
@@ -477,9 +480,10 @@ export async function deleteChat(characterName, file) {
 
 const SEARCH_LIMIT = 200;
 
-/** Search all chats for a character (or all characters if name is null). */
+/** Search all chats for a character (or all characters if name is null).
+ *  Case- and accent-insensitive ("jose" matches "José"). */
 export function searchChats(query, characterName = null) {
-  const q = query.toLowerCase();
+  const q = foldText(query);
   const results = [];
   const chatsRoot = path.join(dataDir(), 'chats');
   if (!fs.existsSync(chatsRoot)) return results;
@@ -495,7 +499,7 @@ export function searchChats(query, characterName = null) {
         const { metadata, messages } = loadChat(dir, file);
         for (let index = 0; index < messages.length; index++) {
           const m = messages[index];
-          if ((m.mes ?? '').toLowerCase().includes(q)) {
+          if (foldText(m.mes ?? '').includes(q)) {
             results.push({
               characterName: metadata.character_name ?? dir,
               file,
@@ -536,7 +540,8 @@ export function lastActiveChatCharacter() {
 }
 
 function snippetAround(text, q) {
-  const idx = text.toLowerCase().indexOf(q);
+  // foldText is length-preserving, so the folded index maps onto the original
+  const idx = foldText(text).indexOf(q);
   const start = Math.max(0, idx - 60);
   const end = Math.min(text.length, idx + q.length + 60);
   return (start > 0 ? '…' : '') + text.slice(start, end) + (end < text.length ? '…' : '');
@@ -567,12 +572,12 @@ export function importChatJSONL(characterName, sourcePath) {
     .readFileSync(sourcePath, 'utf8')
     .split('\n')
     .filter((l) => l.trim());
-  if (!rawLines.length) throw new Error('Chat file is empty');
+  if (!rawLines.length) throw new Error(t('errors.chatFileEmpty'));
   const parsed = rawLines.map((line, i) => {
     try {
       return JSON.parse(line);
     } catch {
-      throw new Error(`Not a JSONL chat: line ${i + 1} is not valid JSON`);
+      throw new Error(t('errors.notJSONLLine', { line: i + 1 }));
     }
   });
   let header = parsed[0];
@@ -582,7 +587,7 @@ export function importChatJSONL(characterName, sourcePath) {
     header = {};
   }
   const messages = messageLines.map((m, i) => {
-    if (typeof m?.mes !== 'string') throw new Error(`Not a JSONL chat: line ${i + 2} has no message text`);
+    if (typeof m?.mes !== 'string') throw new Error(t('errors.notJSONLNoText', { line: i + 2 }));
     const out = {
       name: m.name ?? (m.is_user ? header.user_name ?? 'User' : characterName),
       is_user: !!m.is_user,
@@ -669,7 +674,7 @@ export async function deleteWorldInfo(file) {
 /** Write a world book to destPath in SillyTavern world-info JSON format. */
 export function exportWorldInfo(file, destPath) {
   const book = listWorldInfo().find((b) => b.file === sanitizeFilename(file));
-  if (!book) throw new Error(`World book not found: ${file}`);
+  if (!book) throw new Error(t('errors.worldBookNotFound', { file }));
   const entries = {};
   book.entries.forEach((e, i) => {
     entries[i] = {
@@ -753,7 +758,7 @@ function uploadKind(ext) {
 }
 
 function storeUpload(name, buffer) {
-  if (buffer.length > MAX_UPLOAD_BYTES) throw new Error('File is too large (25 MB max)');
+  if (buffer.length > MAX_UPLOAD_BYTES) throw new Error(t('errors.fileTooLarge'));
   const ext = (path.extname(name).slice(1) || 'bin').toLowerCase();
   const base = sanitizeFilename(path.basename(name, path.extname(name))).slice(0, 60) || 'file';
   const file = `${base}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
@@ -775,7 +780,7 @@ export function importUpload(sourcePath) {
 /** Save in-memory data (a data: URL — pasted or model-generated) into uploads/. */
 export function saveUploadData(name, dataURL) {
   const match = /^data:([^;,]+);base64,(.+)$/s.exec(dataURL ?? '');
-  if (!match) throw new Error('Expected a base64 data URL');
+  if (!match) throw new Error(t('errors.expectedDataURL'));
   const [, mime, b64] = match;
   const extFromMime = Object.entries(UPLOAD_MIMES).find(([, m]) => m === mime)?.[0];
   const named = path.extname(name) ? name : `${name}.${extFromMime ?? 'bin'}`;
@@ -826,7 +831,7 @@ export function listPresets() {
 }
 
 export function savePreset(preset) {
-  if (preset.name === 'Default') throw new Error('Cannot overwrite the Default preset');
+  if (preset.name === 'Default') throw new Error(t('errors.defaultPresetReadonly'));
   writeFileAtomic(
     path.join(presetsDir(), `${sanitizeFilename(preset.name)}.json`),
     JSON.stringify(preset, null, 2)
@@ -893,7 +898,7 @@ export function importPreset(filePath) {
 
 export function exportPreset(name, destPath) {
   const preset = listPresets().find((p) => p.name === name);
-  if (!preset) throw new Error(`Preset not found: ${name}`);
+  if (!preset) throw new Error(t('errors.presetNotFound', { name }));
   fs.writeFileSync(destPath, JSON.stringify(preset, null, 2));
   return true;
 }
@@ -946,7 +951,6 @@ export function importDataFolder(sourceDir) {
       }
     } catch {}
     copyDir(path.join(sourceDir, 'User Avatars'), path.join(dataDir(), 'User Avatars'), '', 'personas');
-    copied.personas = Math.max(0, copied.personas); // avatar copies counted above are fine to fold in
   }
   return copied;
 }

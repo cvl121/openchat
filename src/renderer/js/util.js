@@ -1,5 +1,7 @@
 // Small DOM + misc helpers shared across views.
 
+import { t, currentLocale } from '../../shared/i18n.js';
+
 export function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs)) {
@@ -45,24 +47,33 @@ export function nowISO() {
   return new Date().toISOString();
 }
 
+// One formatter per locale — Intl constructors are expensive per call
+let rtfCache = { locale: null, rtf: null };
+
 export function relativeDate(iso) {
   const date = new Date(iso);
   if (isNaN(date)) return '';
   const diff = Date.now() - date.getTime();
   const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'now';
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 1) return t('dates.now');
+  if (rtfCache.locale !== currentLocale()) {
+    rtfCache = {
+      locale: currentLocale(),
+      rtf: new Intl.RelativeTimeFormat(currentLocale(), { numeric: 'always', style: 'narrow' }),
+    };
+  }
+  if (mins < 60) return rtfCache.rtf.format(-mins, 'minute');
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return rtfCache.rtf.format(-hours, 'hour');
   const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return date.toLocaleDateString();
+  if (days < 7) return rtfCache.rtf.format(-days, 'day');
+  return date.toLocaleDateString(currentLocale());
 }
 
 export function formatTime(iso) {
   const date = new Date(iso);
   if (isNaN(date)) return '';
-  return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return date.toLocaleTimeString(currentLocale(), { hour: 'numeric', minute: '2-digit' });
 }
 
 /** Replace {{char}} / {{user}} template variables (SillyTavern convention). */
@@ -85,7 +96,6 @@ const CJK_RE =
   // full-width forms, plane-2 Han
   /[\u1100-\u11FF\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFFEF\u{20000}-\u{2FA1F}]/gu;
 
-/** Rough token estimate: CJK chars count as 1 token, everything else as 1/4. */
 /** Flatten markdown to plain text for one-line previews and title fallbacks. */
 export function stripMarkdown(text) {
   return (text ?? '')
@@ -111,6 +121,7 @@ export function formatUSD(usd) {
   return usd >= 0.1 ? `$${usd.toFixed(2)}` : `$${usd.toPrecision(2)}`;
 }
 
+/** Rough token estimate: CJK chars count as 1 token, everything else as 1/4. */
 export function estimateTokens(text) {
   const s = text ?? '';
   const cjk = (s.match(CJK_RE) ?? []).length;
@@ -178,7 +189,7 @@ export function modal(contentNode, { width = 520, onClose } = {}) {
 }
 
 /** Single-line text prompt. Resolves to the entered string, or null on cancel. */
-export function promptDialog(message, { value = '', confirmLabel = 'Save', placeholder = '' } = {}) {
+export function promptDialog(message, { value = '', confirmLabel = null, placeholder = '' } = {}) {
   return new Promise((resolve) => {
     const input = el('input', { type: 'text', value, placeholder });
     const content = el(
@@ -189,8 +200,8 @@ export function promptDialog(message, { value = '', confirmLabel = 'Save', place
       el(
         'div',
         { class: 'modal-actions' },
-        el('button', { class: 'btn', onclick: () => done(null) }, 'Cancel'),
-        el('button', { class: 'btn btn-primary', onclick: () => done(input.value) }, confirmLabel)
+        el('button', { class: 'btn', onclick: () => done(null) }, t('common.cancel')),
+        el('button', { class: 'btn btn-primary', onclick: () => done(input.value) }, confirmLabel ?? t('common.save'))
       )
     );
     const overlay = modal(content, { width: 420, onClose: () => resolve(null) });
@@ -206,7 +217,7 @@ export function promptDialog(message, { value = '', confirmLabel = 'Save', place
   });
 }
 
-export function confirmDialog(message, { confirmLabel = 'Delete', danger = true } = {}) {
+export function confirmDialog(message, { confirmLabel = null, danger = true } = {}) {
   return new Promise((resolve) => {
     const content = el(
       'div',
@@ -215,8 +226,8 @@ export function confirmDialog(message, { confirmLabel = 'Delete', danger = true 
       el(
         'div',
         { class: 'modal-actions' },
-        el('button', { class: 'btn', onclick: () => done(false) }, 'Cancel'),
-        el('button', { class: danger ? 'btn btn-danger' : 'btn btn-primary', onclick: () => done(true) }, confirmLabel)
+        el('button', { class: 'btn', onclick: () => done(false) }, t('common.cancel')),
+        el('button', { class: danger ? 'btn btn-danger' : 'btn btn-primary', onclick: () => done(true) }, confirmLabel ?? t('common.delete'))
       )
     );
     const overlay = modal(content, { width: 400, onClose: () => resolve(false) });

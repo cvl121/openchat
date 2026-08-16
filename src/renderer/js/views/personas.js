@@ -4,6 +4,7 @@
 import { el, clear, uuid, toast, confirmDialog } from '../util.js';
 import { state, personaAvatarURL, scheduleSettingsSave } from '../state.js';
 import { avatar, textRow, textareaRow } from '../components.js';
+import { t } from '../../../shared/i18n.js';
 
 let cb = {}; // { renderSidebar }
 
@@ -25,22 +26,21 @@ export function renderPersonas() {
     el(
       'div',
       { class: 'page-header' },
-      el('h1', {}, 'Personas'),
+      el('h1', {}, t('personas.title')),
       el(
         'button',
         {
           class: 'btn btn-primary',
           onclick: async () => {
-            state.personas.push({ id: uuid(), name: 'New Persona', description: '', avatarFilename: null });
+            state.personas.push({ id: uuid(), name: t('personas.defaultName'), description: '', avatarFilename: null });
             await save();
             renderPersonas();
           },
         },
-        '+ New Persona'
+        t('personas.new')
       )
     ),
-    el('p', { class: 'hint', style: { marginBottom: '14px' } },
-      'The active persona provides your name and description in chats. Its description is injected into the prompt so characters know who they are talking to.')
+    el('p', { class: 'hint', style: { marginBottom: '14px' } }, t('personas.hint'))
   );
 
   const activeId = state.settings.activePersonaId ?? state.personas[0]?.id;
@@ -55,7 +55,7 @@ export function renderPersonas() {
       avatar(personaAvatarURL(persona), persona.name, 44),
       el('strong', { style: { flex: 1 } }, persona.name),
       isActive
-        ? el('span', { class: 'mode-badge' }, 'Active')
+        ? el('span', { class: 'mode-badge' }, t('personas.active'))
         : el(
             'button',
             {
@@ -67,27 +67,27 @@ export function renderPersonas() {
                 cb.renderSidebar?.();
               },
             },
-            'Set Active'
+            t('personas.setActive')
           )
     );
 
     card.append(
       header,
-      textRow('Name', {
+      textRow(t('personas.name'), {
         get: () => persona.name,
         set: (v) => {
           persona.name = v;
           saveDebounced();
         },
       }),
-      textareaRow('Description', {
+      textareaRow(t('personas.description'), {
         get: () => persona.description,
         set: (v) => {
           persona.description = v;
           saveDebounced();
         },
         rows: 3,
-        placeholder: 'Who are you in the story? Injected into the prompt.',
+        placeholder: t('personas.descriptionPlaceholder'),
       }),
       el(
         'div',
@@ -98,7 +98,7 @@ export function renderPersonas() {
             class: 'btn btn-small',
             onclick: async () => {
               const files = await window.tavern.dialog.openFile({
-                filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
+                filters: [{ name: t('personas.filterImages'), extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
               });
               if (!files[0]) return;
               persona.avatarFilename = await window.tavern.personas.saveAvatar(persona.id, files[0]);
@@ -106,7 +106,7 @@ export function renderPersonas() {
               renderPersonas();
             },
           },
-          'Set Avatar…'
+          t('personas.setAvatar')
         ),
         state.personas.length > 1
           ? el(
@@ -114,7 +114,7 @@ export function renderPersonas() {
               {
                 class: 'btn btn-small btn-danger',
                 onclick: async () => {
-                  const ok = await confirmDialog(`Delete persona "${persona.name}"?`);
+                  const ok = await confirmDialog(t('personas.deleteConfirm', { name: persona.name }));
                   if (!ok) return;
                   state.personas = state.personas.filter((p) => p.id !== persona.id);
                   if (state.settings.activePersonaId === persona.id) state.settings.activePersonaId = state.personas[0]?.id ?? null;
@@ -123,7 +123,7 @@ export function renderPersonas() {
                   renderPersonas();
                 },
               },
-              'Delete'
+              t('common.delete')
             )
           : null
       )
@@ -133,13 +133,13 @@ export function renderPersonas() {
 
   // Per-character persona assignments
   if (state.characters.length) {
-    inner.append(el('h3', { style: { margin: '20px 0 10px' } }, 'Per-Character Personas'));
-    inner.append(el('p', { class: 'hint', style: { marginBottom: '10px' } }, 'Assign a specific persona to a character; it overrides the active persona in their chats.'));
+    inner.append(el('h3', { style: { margin: '20px 0 10px' } }, t('personas.perCharacter')));
+    inner.append(el('p', { class: 'hint', style: { marginBottom: '10px' } }, t('personas.perCharacterHint')));
     for (const character of state.characters) {
       const select = el(
         'select',
         { style: { width: '220px' } },
-        el('option', { value: '' }, '(use active persona)'),
+        el('option', { value: '' }, t('personas.useActive')),
         state.personas.map((p) =>
           el('option', { value: p.id, selected: state.settings.characterPersonas?.[character.filename] === p.id }, p.name)
         )

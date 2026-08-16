@@ -6,6 +6,7 @@ import { el, clear, toast, modal } from '../util.js';
 import { state, isAdvanced } from '../state.js';
 import { textRow, textareaRow } from '../components.js';
 import { loreEntryCard, newLoreEntry } from './worldinfo.js';
+import { t } from '../../../shared/i18n.js';
 
 let cb = {}; // { reloadCharacters, selectCharacter }
 
@@ -34,13 +35,13 @@ export function openCharacterEditor(character) {
   };
   let avatarPath = null;
 
-  const content = el('div', {}, el('h2', {}, character ? `Edit ${draft.name}` : 'New Character'));
+  const content = el('div', {}, el('h2', {}, character ? t('editor.editTitle', { name: draft.name }) : t('editor.newCharacter')));
 
-  const avatarBtn = el('button', { class: 'btn' }, 'Choose Avatar (PNG)…');
-  const avatarLabel = el('span', { class: 'hint', style: { marginLeft: '8px' } }, character ? 'Keeping current avatar' : 'Optional');
+  const avatarBtn = el('button', { class: 'btn' }, t('editor.chooseAvatar'));
+  const avatarLabel = el('span', { class: 'hint', style: { marginLeft: '8px' } }, character ? t('editor.keepingAvatar') : t('editor.optional'));
   avatarBtn.addEventListener('click', async () => {
     const files = await window.tavern.dialog.openFile({
-      filters: [{ name: 'PNG Image', extensions: ['png'] }],
+      filters: [{ name: t('editor.filterPNG'), extensions: ['png'] }],
     });
     if (files[0]) {
       avatarPath = files[0];
@@ -49,54 +50,54 @@ export function openCharacterEditor(character) {
   });
 
   content.append(
-    textRow('Name *', { get: () => draft.name, set: (v) => (draft.name = v), placeholder: 'Character name' }),
-    el('div', { class: 'form-row' }, el('label', {}, 'Avatar'), el('div', { class: 'form-inline' }, avatarBtn, avatarLabel)),
-    textareaRow('Description', {
+    textRow(t('editor.name'), { get: () => draft.name, set: (v) => (draft.name = v), placeholder: t('editor.namePlaceholder') }),
+    el('div', { class: 'form-row' }, el('label', {}, t('editor.avatar')), el('div', { class: 'form-inline' }, avatarBtn, avatarLabel)),
+    textareaRow(t('editor.description'), {
       get: () => draft.description,
       set: (v) => (draft.description = v),
       rows: 6,
-      placeholder: 'Who is this character? Supports {{char}} and {{user}}.',
+      placeholder: t('editor.descriptionPlaceholder'),
     }),
-    textareaRow('Personality', { get: () => draft.personality, set: (v) => (draft.personality = v), rows: 2 }),
-    textareaRow('Scenario', { get: () => draft.scenario, set: (v) => (draft.scenario = v), rows: 2 }),
-    textareaRow('First Message', {
+    textareaRow(t('editor.personality'), { get: () => draft.personality, set: (v) => (draft.personality = v), rows: 2 }),
+    textareaRow(t('editor.scenario'), { get: () => draft.scenario, set: (v) => (draft.scenario = v), rows: 2 }),
+    textareaRow(t('editor.firstMessage'), {
       get: () => draft.first_mes,
       set: (v) => (draft.first_mes = v),
       rows: 4,
-      placeholder: 'The greeting that starts every new chat.',
+      placeholder: t('editor.firstMessagePlaceholder'),
     }),
-    textareaRow('Alternate Greetings (one per line — become greeting swipes)', {
+    textareaRow(t('editor.altGreetings'), {
       get: () => draft.alternate_greetings.join('\n'),
       set: (v) => (draft.alternate_greetings = v.split('\n').filter((s) => s.trim())),
       rows: 3,
     }),
-    textRow('Tags (comma-separated)', {
+    textRow(t('editor.tags'), {
       get: () => draft.tags.join(', '),
-      set: (v) => (draft.tags = v.split(',').map((t) => t.trim()).filter(Boolean)),
+      set: (v) => (draft.tags = v.split(',').map((x) => x.trim()).filter(Boolean)),
     })
   );
 
   if (isAdvanced()) {
     content.append(
-      el('h3', { style: { margin: '18px 0 10px', fontSize: '12px', color: 'var(--text-dim)', textTransform: 'uppercase' } }, 'Advanced'),
-      textareaRow('System Prompt (overrides the default "You are {{char}}.")', {
+      el('h3', { style: { margin: '18px 0 10px', fontSize: '12px', color: 'var(--text-dim)', textTransform: 'uppercase' } }, t('editor.advanced')),
+      textareaRow(t('editor.systemPrompt'), {
         get: () => draft.system_prompt,
         set: (v) => (draft.system_prompt = v),
         rows: 3,
       }),
-      textareaRow('Post-History Instructions (appended after chat history)', {
+      textareaRow(t('editor.postHistory'), {
         get: () => draft.post_history_instructions,
         set: (v) => (draft.post_history_instructions = v),
         rows: 2,
       }),
-      textareaRow('Example Dialogue (SillyTavern format: <START>, {{user}}:, {{char}}:)', {
+      textareaRow(t('editor.exampleDialogue'), {
         get: () => draft.mes_example,
         set: (v) => (draft.mes_example = v),
         rows: 5,
       }),
-      textRow('Creator', { get: () => draft.creator, set: (v) => (draft.creator = v) }),
-      textareaRow('Creator Notes', { get: () => draft.creator_notes, set: (v) => (draft.creator_notes = v), rows: 2 }),
-      textRow('Version', { get: () => draft.character_version, set: (v) => (draft.character_version = v), placeholder: 'e.g. 1.0' })
+      textRow(t('editor.creator'), { get: () => draft.creator, set: (v) => (draft.creator = v) }),
+      textareaRow(t('editor.creatorNotes'), { get: () => draft.creator_notes, set: (v) => (draft.creator_notes = v), rows: 2 }),
+      textRow(t('editor.version'), { get: () => draft.character_version, set: (v) => (draft.character_version = v), placeholder: t('editor.versionPlaceholder') })
     );
 
     const bookSection = el('div', {});
@@ -105,9 +106,8 @@ export function openCharacterEditor(character) {
       const entries = draft.character_book?.entries ?? [];
       bookSection.append(
         el('h3', { style: { margin: '18px 0 10px', fontSize: '12px', color: 'var(--text-dim)', textTransform: 'uppercase' } },
-          `Embedded Lore Book${entries.length ? ` (${entries.length})` : ''}`),
-        el('p', { class: 'hint', style: { marginBottom: '10px' } },
-          'Lore entries travel inside the card and are injected when their keywords appear in recent messages.')
+          `${t('editor.loreBook')}${entries.length ? ` (${entries.length})` : ''}`),
+        el('p', { class: 'hint', style: { marginBottom: '10px' } }, t('editor.loreBookHint'))
       );
       entries.forEach((entry, index) => {
         bookSection.append(
@@ -126,7 +126,7 @@ export function openCharacterEditor(character) {
             draft.character_book.entries.push(newLoreEntry());
             renderBook();
           },
-        }, '+ Add Lore Entry')
+        }, t('editor.addLoreEntry'))
       );
     };
     renderBook();
@@ -136,7 +136,7 @@ export function openCharacterEditor(character) {
   const doExport = async (format) => {
     try {
       const saved = await window.tavern.characters.export(character.filename, format);
-      if (saved) toast('Character exported', 'ok');
+      if (saved) toast(t('sidebar.characterExported'), 'ok');
     } catch (err) {
       toast(err.message, 'error');
     }
@@ -150,25 +150,25 @@ export function openCharacterEditor(character) {
         ? el('button', {
             class: 'btn',
             style: { marginRight: 'auto' },
-            title: 'Export the last saved version as a PNG card',
+            title: t('editor.exportPNGTitle'),
             onclick: () => doExport('png'),
-          }, 'Export PNG…')
+          }, t('editor.exportPNG'))
         : null,
       character
         ? el('button', {
             class: 'btn',
-            title: 'Export the last saved version as JSON',
+            title: t('editor.exportJSONTitle'),
             onclick: () => doExport('json'),
-          }, 'Export JSON…')
+          }, t('editor.exportJSON'))
         : null,
-      el('button', { class: 'btn', onclick: () => overlay.close() }, 'Cancel'),
+      el('button', { class: 'btn', onclick: () => overlay.close() }, t('common.cancel')),
       el(
         'button',
         {
           class: 'btn btn-primary',
           onclick: async () => {
             if (!draft.name.trim()) {
-              toast('Name is required', 'error');
+              toast(t('editor.nameRequired'), 'error');
               return;
             }
             try {
@@ -179,7 +179,7 @@ export function openCharacterEditor(character) {
                 avatarPath,
               });
               overlay.close();
-              toast(character ? 'Character updated' : 'Character created', 'ok');
+              toast(character ? t('editor.updated') : t('editor.created'), 'ok');
               await cb.reloadCharacters?.();
               const refreshed = state.characters.find((c) => c.filename === saved.filename);
               if (refreshed && !character) cb.selectCharacter?.(refreshed);
@@ -188,7 +188,7 @@ export function openCharacterEditor(character) {
             }
           },
         },
-        character ? 'Save' : 'Create'
+        character ? t('common.save') : t('editor.create')
       )
     )
   );

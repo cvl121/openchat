@@ -4,6 +4,7 @@
 import { el, clear, toast, confirmDialog, modal } from '../util.js';
 import { state } from '../state.js';
 import { textRow, textareaRow, checkboxRow } from '../components.js';
+import { t } from '../../../shared/i18n.js';
 
 let cb = {}; // { reloadWorlds }
 
@@ -21,7 +22,7 @@ export function renderWorldInfo() {
     el(
       'div',
       { class: 'page-header' },
-      el('h1', {}, 'World Lore'),
+      el('h1', {}, t('worlds.title')),
       el(
         'div',
         { style: { display: 'flex', gap: '8px' } },
@@ -31,12 +32,12 @@ export function renderWorldInfo() {
             class: 'btn',
             onclick: async () => {
               const files = await window.tavern.dialog.openFile({
-                filters: [{ name: 'World Info JSON', extensions: ['json'] }],
+                filters: [{ name: t('worlds.filterJSON'), extensions: ['json'] }],
               });
               if (!files[0]) return;
               try {
                 await window.tavern.worlds.import(files[0]);
-                toast('World book imported', 'ok');
+                toast(t('worlds.imported'), 'ok');
                 await cb.reloadWorlds?.();
                 renderWorldInfo();
               } catch (err) {
@@ -44,7 +45,7 @@ export function renderWorldInfo() {
               }
             },
           },
-          'Import…'
+          t('common.import')
         ),
         el(
           'button',
@@ -52,7 +53,7 @@ export function renderWorldInfo() {
             class: 'btn btn-primary',
             onclick: async () => {
               const book = await window.tavern.worlds.save({
-                name: 'New World Book',
+                name: t('worlds.defaultName'),
                 entries: [],
                 global: false,
                 assignedCharacters: [],
@@ -63,16 +64,15 @@ export function renderWorldInfo() {
               renderWorldInfo();
             },
           },
-          '+ New Book'
+          t('worlds.newBook')
         )
       )
     ),
-    el('p', { class: 'hint', style: { marginBottom: '14px' } },
-      'Lore entries are injected into the prompt when their keywords appear in recent messages (constant entries are always included). Books apply globally or to assigned characters.')
+    el('p', { class: 'hint', style: { marginBottom: '14px' } }, t('worlds.hint'))
   );
 
   if (!state.worlds.length) {
-    inner.append(el('p', { style: { color: 'var(--text-dim)' } }, 'No world books yet.'));
+    inner.append(el('p', { style: { color: 'var(--text-dim)' } }, t('worlds.none')));
   }
 
   for (const book of state.worlds) {
@@ -87,18 +87,18 @@ export function renderWorldInfo() {
           el(
             'div',
             { class: 'list-sub' },
-            `${book.entries.length} entries · ${book.global ? 'global' : book.assignedCharacters?.length ? `${book.assignedCharacters.length} characters` : 'unassigned'}`
+            `${t('worlds.nEntries', { count: book.entries.length })} · ${book.global ? t('worlds.global') : book.assignedCharacters?.length ? t('worlds.nCharacters', { count: book.assignedCharacters.length }) : t('worlds.unassigned')}`
           )
         ),
         el('button', {
           class: 'btn-icon',
-          title: 'Export book',
-          'aria-label': `Export world book ${book.name}`,
+          title: t('worlds.exportBook'),
+          'aria-label': t('worlds.exportBookAria', { name: book.name }),
           onclick: async (e) => {
             e.stopPropagation();
             try {
               const saved = await window.tavern.worlds.export(book.file);
-              if (saved) toast('World book exported', 'ok');
+              if (saved) toast(t('worlds.exported'), 'ok');
             } catch (err) {
               toast(err.message, 'error');
             }
@@ -106,11 +106,11 @@ export function renderWorldInfo() {
         }, '⬇'),
         el('button', {
           class: 'btn-icon',
-          title: 'Delete book',
-          'aria-label': `Delete world book ${book.name}`,
+          title: t('worlds.deleteBook'),
+          'aria-label': t('worlds.deleteBookAria', { name: book.name }),
           onclick: async (e) => {
             e.stopPropagation();
-            const ok = await confirmDialog(`Delete world book "${book.name}"?`);
+            const ok = await confirmDialog(t('worlds.deleteConfirm', { name: book.name }));
             if (!ok) return;
             await window.tavern.worlds.delete(book.file);
             await cb.reloadWorlds?.();
@@ -130,10 +130,10 @@ function openBookEditor(book) {
 
   const rerender = () => {
     clear(content);
-    content.append(el('h2', {}, 'Edit World Book'));
+    content.append(el('h2', {}, t('worlds.editBook')));
     content.append(
-      textRow('Book Name', { get: () => draft.name, set: (v) => (draft.name = v) }),
-      checkboxRow('Global (applies to every character)', {
+      textRow(t('worlds.bookName'), { get: () => draft.name, set: (v) => (draft.name = v) }),
+      checkboxRow(t('worlds.globalLabel'), {
         get: () => !!draft.global,
         set: (v) => (draft.global = v),
       })
@@ -143,7 +143,7 @@ function openBookEditor(book) {
       const assigned = new Set(draft.assignedCharacters ?? []);
       content.append(
         el('div', { class: 'form-row' },
-          el('label', {}, 'Assigned Characters'),
+          el('label', {}, t('worlds.assignedCharacters')),
           el('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px' } },
             state.characters.map((c) => {
               const box = el('input', { type: 'checkbox' });
@@ -160,7 +160,7 @@ function openBookEditor(book) {
       );
     }
 
-    content.append(el('h3', { style: { margin: '14px 0 8px' } }, `Entries (${draft.entries.length})`));
+    content.append(el('h3', { style: { margin: '14px 0 8px' } }, t('worlds.entries', { count: draft.entries.length })));
     draft.entries.forEach((entry, index) => {
       content.append(
         loreEntryCard(entry, () => {
@@ -177,19 +177,19 @@ function openBookEditor(book) {
           draft.entries.push(newLoreEntry());
           rerender();
         },
-      }, '+ Add Entry'),
+      }, t('worlds.addEntry')),
       el('div', { class: 'modal-actions' },
-        el('button', { class: 'btn', onclick: () => overlay.close() }, 'Cancel'),
+        el('button', { class: 'btn', onclick: () => overlay.close() }, t('common.cancel')),
         el('button', {
           class: 'btn btn-primary',
           onclick: async () => {
             await window.tavern.worlds.save(draft);
             overlay.close();
-            toast('World book saved', 'ok');
+            toast(t('worlds.saved'), 'ok');
             await cb.reloadWorlds?.();
             renderWorldInfo();
           },
-        }, 'Save')
+        }, t('common.save'))
       )
     );
   };
@@ -220,7 +220,7 @@ export function newLoreEntry() {
 
 /** One editable lore entry card — shared by world books and embedded character books. */
 export function loreEntryCard(entry, onDelete) {
-  const selective = inlineCheck('Require a secondary keyword too', () => !!entry.selective, (v) => (entry.selective = v));
+  const selective = inlineCheck(t('worlds.requireSecondary'), () => !!entry.selective, (v) => (entry.selective = v));
   const syncSelective = () => (selective.style.display = entry.secondary_keys?.length ? '' : 'none');
   syncSelective();
 
@@ -228,33 +228,33 @@ export function loreEntryCard(entry, onDelete) {
   orderInput.addEventListener('change', () => (entry.insertion_order = parseInt(orderInput.value, 10) || 0));
 
   return el('div', { class: 'card' },
-    textRow('Keywords (comma-separated)', {
+    textRow(t('worlds.keywords'), {
       get: () => (entry.keys ?? []).join(', '),
       set: (v) => (entry.keys = v.split(',').map((k) => k.trim()).filter(Boolean)),
     }),
-    textRow('Secondary Keywords (optional, comma-separated)', {
+    textRow(t('worlds.secondaryKeywords'), {
       get: () => (entry.secondary_keys ?? []).join(', '),
       set: (v) => {
         entry.secondary_keys = v.split(',').map((k) => k.trim()).filter(Boolean);
         syncSelective();
       },
     }),
-    textareaRow('Content', { get: () => entry.content, set: (v) => (entry.content = v), rows: 3 }),
+    textareaRow(t('worlds.content'), { get: () => entry.content, set: (v) => (entry.content = v), rows: 3 }),
     el('div', { style: { display: 'flex', gap: '16px', alignItems: 'center', flexWrap: 'wrap' } },
-      inlineCheck('Constant (always included)', () => !!entry.constant, (v) => (entry.constant = v)),
-      inlineCheck('Enabled', () => entry.enabled !== false, (v) => (entry.enabled = v)),
-      inlineCheck('Case sensitive', () => !!entry.case_sensitive, (v) => (entry.case_sensitive = v)),
+      inlineCheck(t('worlds.constant'), () => !!entry.constant, (v) => (entry.constant = v)),
+      inlineCheck(t('worlds.enabled'), () => entry.enabled !== false, (v) => (entry.enabled = v)),
+      inlineCheck(t('worlds.caseSensitive'), () => !!entry.case_sensitive, (v) => (entry.case_sensitive = v)),
       selective,
       el('label', {
         class: 'form-inline',
         style: { fontSize: '12px' },
-        title: 'Insertion order — lower numbers are inserted earlier in the prompt',
-      }, 'Order', orderInput),
+        title: t('worlds.orderTitle'),
+      }, t('worlds.order'), orderInput),
       el('button', {
         class: 'btn-icon',
         style: { marginLeft: 'auto' },
-        title: 'Delete entry',
-        'aria-label': 'Delete entry',
+        title: t('worlds.deleteEntry'),
+        'aria-label': t('worlds.deleteEntry'),
         onclick: onDelete,
       }, '🗑')
     )

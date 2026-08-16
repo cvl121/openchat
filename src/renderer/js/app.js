@@ -2,11 +2,14 @@
 // handles routing, keyboard shortcuts, menu events, and first-run onboarding.
 
 import { el, clear, modal, toast } from './util.js';
+import { sanitizeFilename } from '../../shared/filenames.js';
+import { t, setLocale, resolveLocale } from '../../shared/i18n.js';
 import { state, loadAll, scheduleSettingsSave, saveSettingsNow, saveSettingsSync, isChatMode, isCurrentChatGenerating, PROVIDERS } from './state.js';
 import { initSidebar, renderSidebar, toggleSidebar } from './views/sidebar.js';
 import {
   initChat,
   renderChat,
+  clearRenderCache,
   selectCharacter,
   enterChatMode,
   selectConversation,
@@ -43,12 +46,24 @@ function navigate(view) {
   renderSidebar();
 }
 
+// CJK faces are listed after the Latin ones so Chinese/Japanese text gets a
+// matching style (mincho for serif, maru gothic for rounded) instead of the
+// browser's default gothic fallback.
 const APP_FONTS = {
   system: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-  serif: "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif",
+  serif: "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Hiragino Mincho ProN', 'Songti SC', 'Noto Serif CJK SC', serif",
   rounded: "ui-rounded, 'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Quicksand, sans-serif",
   mono: "ui-monospace, 'SF Mono', Menlo, Consolas, monospace",
 };
+
+/** Resolve and apply the UI language; the main process mirrors it for the menu. */
+function applyLocale() {
+  const locale = resolveLocale(state.settings.language, navigator.language);
+  setLocale(locale);
+  document.documentElement.lang = locale;
+  window.tavern.i18n?.setLocale?.(locale);
+  clearRenderCache(); // cached message HTML embeds localized copy-buttons
+}
 
 // Default chat colors (current + legacy) are dark-theme-tuned. When the user
 // hasn't customized them, let each theme's stylesheet pick readable colors —
@@ -113,7 +128,7 @@ async function reloadAll() {
 function showOnboarding() {
   const s = state.settings;
   const body = el('div', {});
-  const overlay = modal(el('div', {}, el('h2', {}, 'Welcome to OpenChat 🍻'), body), {
+  const overlay = modal(el('div', {}, el('h2', {}, t('onboarding.title')), body), {
     width: 540,
     onClose: () => {
       s.onboardingComplete = true;
@@ -121,34 +136,21 @@ function showOnboarding() {
     },
   });
 
-  const PROVIDER_BLURBS = {
-    openrouter: 'Recommended — one key unlocks hundreds of models.',
-    openai: 'GPT models with an OpenAI platform key.',
-    claude: 'Claude models with an Anthropic key.',
-    gemini: 'Gemini models with a Google AI Studio key.',
-    deepseek: 'DeepSeek V3 and R1 reasoning models — inexpensive and capable.',
-    kimi: 'Kimi K2 models from Moonshot AI.',
-    qwen: 'Qwen models via Alibaba Cloud Model Studio.',
-    ollama: 'Run local models — no key, free, private.',
-    custom: 'Any OpenAI-compatible server (LM Studio, vLLM, Groq, Together…).',
-  };
-
   function stepProvider() {
     clear(body);
     body.append(
-      el('p', { style: { lineHeight: 1.6, marginBottom: '12px' } },
-        'A fast, local-first AI chat app — your conversations, characters, and keys stay on your machine. Pick how you want to connect:'),
+      el('p', { style: { lineHeight: 1.6, marginBottom: '12px' } }, t('onboarding.intro')),
       ...Object.entries(PROVIDERS).map(([id, p]) =>
         el(
           'button',
           { class: 'onboarding-provider list-row', onclick: () => stepConnect(id) },
           el('div', { class: 'list-main' },
             el('div', { class: 'list-title' }, p.label, id === 'openrouter' ? ' ⭐' : ''),
-            el('div', { class: 'list-sub' }, PROVIDER_BLURBS[id] ?? ''))
+            el('div', { class: 'list-sub' }, t(`onboarding.blurb.${id}`)))
         )
       ),
       el('div', { class: 'modal-actions' },
-        el('button', { class: 'btn', onclick: () => overlay.close() }, 'Skip for now'))
+        el('button', { class: 'btn', onclick: () => overlay.close() }, t('onboarding.skip')))
     );
   }
 
@@ -157,26 +159,27 @@ function showOnboarding() {
     const provider = PROVIDERS[providerId];
     const keyInput = el('input', {
       type: 'password',
-      placeholder: `${provider.label} API key${provider.requiresKey ? '' : ' (optional)'}`,
+      placeholder: provider.requiresKey
+        ? t('settings.keyPlaceholder', { label: provider.label })
+        : t('settings.keyPlaceholderOptional'),
     });
     const urlInput = el('input', { type: 'text', placeholder: 'http://localhost:1234/v1' });
     const status = el('p', { class: 'hint', style: { minHeight: '18px', marginTop: '10px' } });
 
     body.append(el('p', { style: { lineHeight: 1.6, marginBottom: '12px' } }, el('strong', {}, provider.label)));
     if (provider.requiresBaseURL) {
-      body.append(el('div', { class: 'form-row' }, el('label', {}, 'Server URL'), urlInput));
+      body.append(el('div', { class: 'form-row' }, el('label', {}, t('settings.serverURL')), urlInput));
     }
     if (providerId === 'ollama') {
-      body.append(el('p', { class: 'hint', style: { marginBottom: '10px' } },
-        'No key needed. Make sure Ollama is installed and `ollama serve` is running, then hit Test.'));
+      body.append(el('p', { class: 'hint', style: { marginBottom: '10px' } }, t('onboarding.ollamaHint')));
     } else {
       body.append(
         el('div', { class: 'form-row' },
-          el('label', {}, provider.requiresKey ? 'API Key' : 'API Key (optional)'),
+          el('label', {}, provider.requiresKey ? t('settings.apiKey') : t('settings.apiKeyOptional')),
           keyInput,
           provider.keyURL
             ? el('div', { class: 'hint' },
-                'Get one at ',
+                t('onboarding.getKeyAt'),
                 el('a', {
                   href: '#',
                   style: { color: 'var(--accent)' },
@@ -200,11 +203,11 @@ function showOnboarding() {
     };
     const finish = () => {
       overlay.close();
-      toast('You’re set — say hi!', 'ok');
+      toast(t('onboarding.done'), 'ok');
     };
     body.append(
       el('div', { class: 'modal-actions' },
-        el('button', { class: 'btn', onclick: () => stepProvider() }, 'Back'),
+        el('button', { class: 'btn', onclick: () => stepProvider() }, t('common.back')),
         el('button', {
           class: 'btn btn-primary',
           onclick: async (e) => {
@@ -212,7 +215,7 @@ function showOnboarding() {
             apply();
             await saveSettingsNow();
             btn.disabled = true;
-            status.textContent = 'Testing connection…';
+            status.textContent = t('onboarding.testing');
             try {
               const config = {
                 provider: providerId,
@@ -232,15 +235,15 @@ function showOnboarding() {
                 }
               }
               const result = await window.tavern.llm.test(config);
-              status.textContent = `✓ Connected (${result.latencyMs}ms)`;
+              status.textContent = t('onboarding.connected', { ms: result.latencyMs });
               setTimeout(finish, 600);
             } catch (err) {
               status.textContent = `✗ ${err.message}`;
               btn.disabled = false;
             }
           },
-        }, 'Test & Finish'),
-        el('button', { class: 'btn', onclick: () => { apply(); saveSettingsNow(); finish(); } }, 'Finish'))
+        }, t('onboarding.testFinish')),
+        el('button', { class: 'btn', onclick: () => { apply(); saveSettingsNow(); finish(); } }, t('common.finish')))
     );
     (provider.requiresBaseURL ? urlInput : keyInput).focus();
   }
@@ -303,8 +306,8 @@ function showUpdateBanner({ version, url }) {
   const banner = el(
     'div',
     { id: 'update-banner', class: 'update-banner' },
-    el('span', {}, `OpenChat ${version} is available`),
-    el('button', { class: 'btn btn-primary', onclick: () => window.tavern.misc.openExternal(url) }, 'View Release'),
+    el('span', {}, t('updates.available', { version })),
+    el('button', { class: 'btn btn-primary', onclick: () => window.tavern.misc.openExternal(url) }, t('updates.viewRelease')),
     el('button', {
       class: 'btn',
       onclick: () => {
@@ -312,8 +315,8 @@ function showUpdateBanner({ version, url }) {
         scheduleSettingsSave();
         banner.remove();
       },
-    }, 'Skip This Version'),
-    el('button', { class: 'update-banner-close', title: 'Dismiss', onclick: () => banner.remove() }, '×')
+    }, t('updates.skipVersion')),
+    el('button', { class: 'update-banner-close', title: t('common.dismiss'), onclick: () => banner.remove() }, '×')
   );
   document.body.append(banner);
 }
@@ -331,6 +334,7 @@ function bindMenuEvents() {
 
 async function main() {
   await loadAll();
+  applyLocale();
   applyAppearance();
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyAppearance);
 
@@ -349,6 +353,7 @@ async function main() {
     reloadPresets,
     reloadAll,
     applyAppearance,
+    applyLocale,
     globalSearch: (q) => openSearch(q, 'all'), // sidebar search spans every conversation
     openSettings: (sectionId) => {
       showSettingsSection(sectionId);
@@ -398,11 +403,14 @@ async function initModeSelection() {
     return;
   }
   if (state.characters.length) {
-    // Chat dirs are named with the same sanitization as storage.sanitizeFilename
-    const sanitize = (name) => name.replace(/[/\\:*?"<>|]/g, '_').trim() || 'Unnamed';
+    // Chat dirs are named by sanitized character name (see storage.chatsDirFor).
+    // NFC-normalize both sides: macOS returns NFD names from readdir, so an
+    // accented or CJK character name would never match its own directory.
     const lastDir = await window.tavern.chats.lastActive();
     const best = lastDir
-      ? state.characters.find((c) => sanitize(c.card.data.name) === lastDir)
+      ? state.characters.find(
+          (c) => sanitizeFilename(c.card.data.name).normalize('NFC') === lastDir.normalize('NFC')
+        )
       : null;
     if (best) {
       await selectCharacter(best);
@@ -423,12 +431,7 @@ async function switchAppMode() {
   state.undoStack = [];
   await initModeSelection();
   renderSidebar();
-  toast(
-    isChatMode()
-      ? 'Chat mode: a clean assistant chat'
-      : 'Story mode: role-play characters, personas & world lore unlocked',
-    'ok'
-  );
+  toast(isChatMode() ? t('mode.chatToast') : t('mode.storyToast'), 'ok');
 }
 
 main().catch((err) => {

@@ -1,7 +1,7 @@
 // Chat view: message list, streaming generation, swipes, editing, history,
 // search, and export.
 
-import { el, clear, uuid, nowISO, formatTime, toast, modal, confirmDialog, escapeHtml, formatUSD, formatModelPricing } from '../util.js';
+import { el, clear, uuid, nowISO, formatTime, toast, modal, confirmDialog, escapeHtml, formatUSD, formatModelPricing, estimateTokens } from '../util.js';
 import { renderMarkdown } from '../markdown.js';
 import { buildMessages, applicableWorldEntries } from '../promptBuilder.js';
 import {
@@ -33,9 +33,10 @@ import {
   rememberModelPricing,
   knownModelPricing,
 } from '../state.js';
-import { estimateTokens } from '../util.js';
 import { avatar, streamingDots } from '../components.js';
-import { imageFollowupAction, decorateModelError, IMAGE_HINT_MESSAGE } from '../imageFlow.js';
+import { imageFollowupAction, decorateModelError, imageHintMessage } from '../imageFlow.js';
+import { t, currentLocale } from '../../../shared/i18n.js';
+import { foldText, truncateChars } from '../../../shared/text.js';
 
 const ASSISTANT_NAME = ASSISTANT_CHARACTER.card.data.name;
 
@@ -75,9 +76,43 @@ function currentNotice() {
 let imageMode = false; // 🎨 toggle: while on, Send routes prompts to the image model
 let impersonating = false; // an impersonate draft is being generated
 let pendingAttachments = []; // uploads staged in the input bar, sent with the next message
+// Prompt-ready upload contents, LRU-capped: image entries are base64 data
+// URLs that can run tens of MB each, so an unbounded cache leaks memory over
+// a long session. Map iteration order doubles as recency (see resolveAttachments).
 const resolvedUploads = new Map(); // upload file -> {kind, dataURL?|text?} for prompt building
+const RESOLVED_UPLOADS_MAX = 32;
 
 let renderQueued = false;
+
+// renderChat rebuilds the full message list on every interaction, but most
+// messages are unchanged between rebuilds — cache their rendered markdown and
+// token estimate per message object so long chats don't re-run the parser
+// (and the CJK token scan) for every message on every click.
+let renderCache = new WeakMap(); // msg -> { mes, html?, tokens? }
+
+/** Cached HTML embeds localized text (code copy-buttons) — drop it on locale change. */
+export function clearRenderCache() {
+  renderCache = new WeakMap();
+}
+
+function cacheFor(msg) {
+  let entry = renderCache.get(msg);
+  if (!entry || entry.mes !== msg.mes) {
+    entry = { mes: msg.mes };
+    renderCache.set(msg, entry);
+  }
+  return entry;
+}
+
+function renderedMarkdown(msg) {
+  const entry = cacheFor(msg);
+  return (entry.html ??= renderMarkdown(msg.mes));
+}
+
+function messageTokens(msg) {
+  const entry = cacheFor(msg);
+  return (entry.tokens ??= estimateTokens(msg.mes));
+}
 
 export function initChat(callbacks) {
   cb = callbacks;
@@ -97,7 +132,7 @@ export function initChat(callbacks) {
         renderQueued = false;
         // The user may have switched conversations during the frame
         if (state.runs.has(requestId) && run.chat === state.currentChat && streamingMsgEl) {
-          streamingMsgEl.innerHTML = renderMarkdown(msg.mes);
+          streamingMsgEl.innerHTML = renderedMarkdown(msg);
           scrollToBottom(false);
         }
       });
@@ -139,7 +174,7 @@ export function initChat(callbacks) {
       });
       return;
     } else if (action === 'hint') {
-      setNotice(run.charName, run.file, { error: IMAGE_HINT_MESSAGE });
+      setNotice(run.charName, run.file, { error: imageHintMessage() });
     }
     await finishGeneration(run);
   });
@@ -254,7 +289,7 @@ async function maybeAutoTitle(run) {
   if (run.charName !== ASSISTANT_NAME) return;
   const chat = run.chat;
   if (chat.messages.length !== 2) return; // exactly the first user turn + first reply
-  const placeholder = (chat.messages.find((m) => m.is_user)?.mes ?? '').slice(0, 64);
+  const placeholder = truncateChars(chat.messages.find((m) => m.is_user)?.mes ?? '', 64);
   if (chat.metadata.title && chat.metadata.title !== placeholder) return;
   const config = apiConfig(chat.metadata.model);
   if (PROVIDERS[config.provider].requiresKey && !config.apiKey) return;
@@ -269,7 +304,7 @@ async function maybeAutoTitle(run) {
           {
             role: 'system',
             content:
-              'Write a title of at most six words for this conversation. Reply with only the title — no quotes, no trailing punctuation.',
+              "Write a title of at most six words for this conversation, in the conversation's own language. Reply with only the title — no quotes, no trailing punctuation.",
           },
           { role: 'user', content: transcript },
         ],
@@ -277,11 +312,10 @@ async function maybeAutoTitle(run) {
       )
     )
       ?.trim()
-      .replace(/^["'“]+|["'”]+$/g, '')
-      .slice(0, 64);
+      .replace(/^["'“]+|["'”]+$/g, '');
     if (!text) return;
     if (chat.metadata.title && chat.metadata.title !== placeholder) return; // renamed mid-flight
-    await renameConversation(chat.file, text);
+    await renameConversation(chat.file, truncateChars(text, 64));
   } catch (err) {
     devLog('INFO', `auto-title skipped: ${err.message}`); // placeholder title remains
   }
@@ -344,14 +378,35 @@ async function maybeCompressChat() {
  * pending append (an in-flight reply) stay out of the rewrite so the
  * finishing run's append can't duplicate them.
  */
-async function persistChatMetadata(chat) {
-  if (!chat || !state.selectedCharacter) return;
+async function persistChatMetadataFor(charName, chat) {
   await window.tavern.chats.rewrite(
-    state.selectedCharacter.card.data.name,
+    charName,
     chat.file,
     chat.metadata,
     chat.messages.filter((m) => !newMessages.has(m)).map(({ __streaming, ...m }) => m)
   );
+}
+
+async function persistChatMetadata(chat) {
+  if (!chat || !state.selectedCharacter) return;
+  await persistChatMetadataFor(state.selectedCharacter.card.data.name, chat);
+}
+
+/**
+ * Drop everything held in memory for a chat that is being deleted. The run is
+ * removed from the registry BEFORE aborting: with the run already gone, the
+ * aborted llm:error event no-ops instead of persisting into (and thereby
+ * resurrecting) the deleted file.
+ */
+function forgetChat(charName, file) {
+  const run = runFor(charName, file);
+  if (run) {
+    state.runs.delete(run.requestId);
+    window.tavern.llm.stop(run.requestId);
+  }
+  clearUnread(charName, file);
+  chatDrafts.delete(convKey(charName, file));
+  chatNotices.delete(convKey(charName, file));
 }
 
 async function persistChatFor(charName, chat) {
@@ -421,16 +476,7 @@ export async function selectConversation(file) {
 }
 
 export async function deleteConversation(file) {
-  // Drop the run from the registry BEFORE aborting: with the run already
-  // gone, the aborted llm:error event no-ops instead of persisting into
-  // (and thereby resurrecting) the deleted file.
-  const run = runFor(ASSISTANT_NAME, file);
-  if (run) {
-    state.runs.delete(run.requestId);
-    window.tavern.llm.stop(run.requestId);
-  }
-  clearUnread(ASSISTANT_NAME, file);
-  chatDrafts.delete(convKey(ASSISTANT_NAME, file));
+  forgetChat(ASSISTANT_NAME, file);
   const pins = state.settings.pinnedConversations;
   if (pins?.includes(file)) {
     state.settings.pinnedConversations = pins.filter((f) => f !== file);
@@ -455,12 +501,7 @@ export async function renameConversation(file, title) {
   chat.metadata.title = title;
   // Messages pending append (a streaming reply) are not on disk yet — leave
   // them out of the rewrite or the finishing run would append a duplicate.
-  await window.tavern.chats.rewrite(
-    ASSISTANT_NAME,
-    file,
-    chat.metadata,
-    chat.messages.filter((m) => !newMessages.has(m)).map(({ __streaming, ...m }) => m)
-  );
+  await persistChatMetadataFor(ASSISTANT_NAME, chat);
   await refreshConversations();
   if (state.currentChat?.file === file && state.view === 'chat') renderChat();
 }
@@ -570,16 +611,16 @@ export function renderChat({ scrollBottom = false } = {}) {
         ? el(
             'div',
             { class: 'empty-state' },
-            el('h2', {}, 'Welcome to OpenChat'),
-            el('p', {}, 'Start a conversation with the assistant, or add an API key in Settings first.'),
-            el('button', { class: 'btn btn-primary', onclick: () => enterChatMode() }, '+ New Chat')
+            el('h2', {}, t('chat.welcome')),
+            el('p', {}, t('chat.welcomeChat')),
+            el('button', { class: 'btn btn-primary', onclick: () => enterChatMode() }, t('sidebar.newChat'))
           )
         : el(
             'div',
             { class: 'empty-state' },
-            el('h2', {}, 'Welcome to OpenChat'),
-            el('p', {}, 'Select a character from the sidebar, or create a new one to start chatting.'),
-            el('button', { class: 'btn btn-primary', onclick: () => cb.editCharacter?.(null) }, '+ New Character')
+            el('h2', {}, t('chat.welcome')),
+            el('p', {}, t('chat.welcomeStory')),
+            el('button', { class: 'btn btn-primary', onclick: () => cb.editCharacter?.(null) }, t('sidebar.newCharacter'))
           )
     );
     return;
@@ -589,7 +630,7 @@ export function renderChat({ scrollBottom = false } = {}) {
   const config = apiConfig(state.currentChat?.metadata?.model);
   const notice = currentNotice();
   const chatTitle = isChatMode()
-    ? state.currentChat?.metadata?.title || 'New conversation'
+    ? state.currentChat?.metadata?.title || t('sidebar.newConversation')
     : data.name;
 
   const allMessages = state.currentChat?.messages ?? [];
@@ -598,11 +639,11 @@ export function renderChat({ scrollBottom = false } = {}) {
   const costTotal = state.settings.showCostEstimates
     ? allMessages.reduce((sum, m) => sum + (m.extra?.cost?.usd ?? 0), 0)
     : 0;
-  const tokenEstimate = estimateTokens(
-    allMessages.slice(compressedCount).map((m) => m.mes).join(' ') +
-      (state.currentChat?.metadata?.summary?.text ?? '') +
-      (data.description ?? '')
-  );
+  // Per-message sums hit the render cache; joining every message into one
+  // string would allocate O(chat size) on every rebuild.
+  const tokenEstimate =
+    allMessages.slice(compressedCount).reduce((sum, m) => sum + messageTokens(m), 0) +
+    estimateTokens((state.currentChat?.metadata?.summary?.text ?? '') + (data.description ?? ''));
   const root = el('div', { id: 'chat-root' });
   root.append(
     el(
@@ -616,19 +657,19 @@ export function renderChat({ scrollBottom = false } = {}) {
         el(
           'span',
           { class: 'chat-meta' },
-          `${allMessages.length} messages · ~${tokenEstimate.toLocaleString()} tokens`,
+          t('chat.meta', { count: allMessages.length, tokens: tokenEstimate.toLocaleString() }),
           compressedCount > 0
             ? el(
                 'span',
                 {
                   class: 'meta-link',
-                  title: 'View or edit the compressed-history summary',
+                  title: t('chat.compressedTitle'),
                   onclick: () => openSummaryEditor(),
                 },
-                ` · ${compressedCount} compressed`
+                t('chat.compressedCount', { count: compressedCount })
               )
             : null,
-          notice.trimmed > 0 ? ` · ${notice.trimmed} oldest not sent (context full)` : null,
+          notice.trimmed > 0 ? t('chat.trimmedNotice', { count: notice.trimmed }) : null,
           costTotal > 0 ? ` · ~${formatUSD(costTotal)}` : null
         )
       ),
@@ -636,22 +677,22 @@ export function renderChat({ scrollBottom = false } = {}) {
         'button',
         {
           class: 'model-chip',
-          title: `${PROVIDERS[config.provider].label} · ${config.model} — click to switch models`,
-          'aria-label': 'Switch model',
+          title: t('chat.modelChipTitle', { provider: PROVIDERS[config.provider].label, model: config.model }),
+          'aria-label': t('chat.switchModel'),
           onclick: () => openModelSwitcher(),
         },
-        config.model || 'Choose model…'
+        config.model || t('chat.chooseModel')
       ),
       el('button', {
         class: `btn-icon${state.currentChat?.metadata?.authorsNote?.text ? ' active' : ''}`,
-        title: isChatMode() ? 'Instructions for this conversation' : "Author's note for this chat",
-        'aria-label': isChatMode() ? 'Conversation instructions' : "Author's note",
+        title: isChatMode() ? t('chat.instructionsTitle') : t('chat.authorsNoteTitle'),
+        'aria-label': isChatMode() ? t('chat.instructionsAria') : t('chat.authorsNoteAria'),
         onclick: () => openAuthorsNote(),
       }, '📝'),
-      el('button', { class: 'btn-icon', title: 'Search (⌘F)', 'aria-label': 'Search', onclick: () => openSearch() }, '🔍'),
-      el('button', { class: 'btn-icon', title: 'Chat history (⌘⇧H)', 'aria-label': 'Chat history', onclick: () => openHistory() }, '🕘'),
-      el('button', { class: 'btn-icon', title: 'Export this chat', 'aria-label': 'Export this chat', onclick: () => exportCurrentChat() }, '⬆'),
-      el('button', { class: 'btn-icon', title: 'New chat (⌘N)', 'aria-label': 'New chat', onclick: () => newChat() }, '＋')
+      el('button', { class: 'btn-icon', title: t('chat.searchTitle'), 'aria-label': t('chat.search'), onclick: () => openSearch() }, '🔍'),
+      el('button', { class: 'btn-icon', title: t('chat.historyTitle'), 'aria-label': t('chat.history'), onclick: () => openHistory() }, '🕘'),
+      el('button', { class: 'btn-icon', title: t('chat.exportThisChat'), 'aria-label': t('chat.exportThisChat'), onclick: () => exportCurrentChat() }, '⬆'),
+      el('button', { class: 'btn-icon', title: t('chat.newChatTitle'), 'aria-label': t('chat.newChat'), onclick: () => newChat() }, '＋')
     )
   );
 
@@ -661,8 +702,8 @@ export function renderChat({ scrollBottom = false } = {}) {
       el(
         'div',
         { class: 'notice-banner' },
-        el('span', {}, `Add your ${PROVIDERS[config.provider].label} API key to start chatting.`),
-        el('button', { class: 'btn btn-primary btn-small', onclick: () => cb.openSettings?.('api') }, 'Open Settings')
+        el('span', {}, t('chat.addKeyBanner', { label: PROVIDERS[config.provider].label })),
+        el('button', { class: 'btn btn-primary btn-small', onclick: () => cb.openSettings?.('api') }, t('chat.openSettings'))
       )
     );
   } else if (PROVIDERS[config.provider].requiresBaseURL && !config.baseURL) {
@@ -670,8 +711,8 @@ export function renderChat({ scrollBottom = false } = {}) {
       el(
         'div',
         { class: 'notice-banner' },
-        el('span', {}, 'Set the server URL for your custom provider to start chatting.'),
-        el('button', { class: 'btn btn-primary btn-small', onclick: () => cb.openSettings?.('api') }, 'Open Settings')
+        el('span', {}, t('chat.setURLBanner')),
+        el('button', { class: 'btn btn-primary btn-small', onclick: () => cb.openSettings?.('api') }, t('chat.openSettings'))
       )
     );
   }
@@ -685,8 +726,8 @@ export function renderChat({ scrollBottom = false } = {}) {
         'div',
         { class: 'error-banner' },
         el('span', {}, notice.error),
-        el('button', { class: 'btn btn-primary btn-small', onclick: () => retryLast() }, 'Retry'),
-        el('button', { class: 'btn btn-small', onclick: () => { setNotice(data.name, state.currentChat.file, { error: null }); renderChat(); } }, 'Dismiss')
+        el('button', { class: 'btn btn-primary btn-small', onclick: () => retryLast() }, t('chat.retry')),
+        el('button', { class: 'btn btn-small', onclick: () => { setNotice(data.name, state.currentChat.file, { error: null }); renderChat(); } }, t('common.dismiss'))
       )
     );
   }
@@ -697,10 +738,10 @@ export function renderChat({ scrollBottom = false } = {}) {
       el(
         'div',
         { class: 'notice-banner' },
-        el('span', {}, `Response hit the Max Response Tokens limit (${config.params.max_tokens.toLocaleString()}).`),
-        el('button', { class: 'btn btn-primary btn-small', onclick: () => continueLast() }, 'Continue'),
-        el('button', { class: 'btn btn-small', onclick: () => cb.openSettings?.('generation') }, 'Raise Limit'),
-        el('button', { class: 'btn btn-small', onclick: () => { setNotice(data.name, state.currentChat.file, { finishReason: null }); renderChat(); } }, 'Dismiss')
+        el('span', {}, t('chat.limitBanner', { limit: config.params.max_tokens.toLocaleString() })),
+        el('button', { class: 'btn btn-primary btn-small', onclick: () => continueLast() }, t('chat.continue')),
+        el('button', { class: 'btn btn-small', onclick: () => cb.openSettings?.('generation') }, t('chat.raiseLimit')),
+        el('button', { class: 'btn btn-small', onclick: () => { setNotice(data.name, state.currentChat.file, { finishReason: null }); renderChat(); } }, t('common.dismiss'))
       )
     );
   }
@@ -709,7 +750,7 @@ export function renderChat({ scrollBottom = false } = {}) {
   // Floating scroll-to-bottom button for long chats
   const scrollBtn = el(
     'button',
-    { id: 'scroll-bottom-btn', title: 'Jump to latest', onclick: () => scrollToBottom(true) },
+    { id: 'scroll-bottom-btn', title: t('chat.jumpToLatest'), onclick: () => scrollToBottom(true) },
     '↓'
   );
   root.append(scrollBtn);
@@ -742,7 +783,7 @@ export function renderChat({ scrollBottom = false } = {}) {
   // Input bar — auto-grows with content up to a max height
   const input = el('textarea', {
     id: 'chat-input',
-    placeholder: imageMode ? 'Describe an image to generate…' : `Message ${data.name}…`,
+    placeholder: imageMode ? t('chat.imagePlaceholder') : t('chat.messagePlaceholder', { name: data.name }),
     rows: 1,
   });
   const autoGrow = () => {
@@ -800,18 +841,18 @@ export function renderChat({ scrollBottom = false } = {}) {
         }
         staged++;
       } catch (err) {
-        toast(`Could not attach ${file.name}: ${err.message}`, 'error');
+        toast(t('chat.couldNotAttach', { name: file.name, msg: err.message }), 'error');
       }
     }
     if (staged) renderChat();
   });
 
   const sendBtn = isCurrentChatGenerating()
-    ? el('button', { class: 'btn btn-danger', onclick: () => stopGeneration() }, 'Stop')
-    : el('button', { class: 'btn btn-primary', disabled: impersonating, onclick: () => sendMessage() }, 'Send');
+    ? el('button', { class: 'btn btn-danger', onclick: () => stopGeneration() }, t('chat.stop'))
+    : el('button', { class: 'btn btn-primary', disabled: impersonating, onclick: () => sendMessage() }, t('chat.send'));
   const attachBtn = el(
     'button',
-    { class: 'btn-icon attach-btn', title: 'Attach images or files', 'aria-label': 'Attach images or files', onclick: () => attachFiles() },
+    { class: 'btn-icon attach-btn', title: t('chat.attachTitle'), 'aria-label': t('chat.attachTitle'), onclick: () => attachFiles() },
     '📎'
   );
   const impersonateBtn = !isChatMode()
@@ -819,8 +860,8 @@ export function renderChat({ scrollBottom = false } = {}) {
         'button',
         {
           class: `btn-icon attach-btn${impersonating ? ' active' : ''}`,
-          title: `Impersonate — let the AI write ${userName()}'s next message into the input`,
-          'aria-label': 'Impersonate: write my next message',
+          title: t('chat.impersonateTitle', { name: userName() }),
+          'aria-label': t('chat.impersonateAria'),
           disabled: isCurrentChatGenerating() || impersonating,
           onclick: () => impersonate(),
         },
@@ -834,10 +875,10 @@ export function renderChat({ scrollBottom = false } = {}) {
         'button',
         {
           class: `btn-icon attach-btn img-toggle${imageMode ? ' active' : ''}`,
-          'aria-label': imageMode ? 'Image mode on — switch back to the chat model' : 'Switch to image mode',
+          'aria-label': imageMode ? t('chat.imageModeOnAria') : t('chat.imageModeOffAria'),
           title: imageMode
-            ? `Image mode — messages generate images with ${imageApiConfig().model}. Click to switch back to the chat model.`
-            : `Switch to image mode (${imageApiConfig().model})`,
+            ? t('chat.imageModeOnTitle', { model: imageApiConfig().model })
+            : t('chat.imageModeOffTitle', { model: imageApiConfig().model }),
           onclick: () => {
             imageMode = !imageMode;
             renderChat();
@@ -860,7 +901,7 @@ export function renderChat({ scrollBottom = false } = {}) {
             a.name,
             el('button', {
               class: 'chip-remove',
-              title: 'Remove',
+              title: t('chat.remove'),
               onclick: () => {
                 pendingAttachments.splice(i, 1);
                 renderChat();
@@ -875,15 +916,16 @@ export function renderChat({ scrollBottom = false } = {}) {
   // Live token estimate for the draft, alongside the key hints
   const draftTokens = el('span', { id: 'draft-tokens' });
   const updateDraftTokens = () => {
-    draftTokens.textContent = input.value.trim() ? `~${estimateTokens(input.value).toLocaleString()} tokens` : '';
+    draftTokens.textContent = input.value.trim()
+      ? t('chat.draftTokens', { count: estimateTokens(input.value).toLocaleString() })
+      : '';
   };
   input.addEventListener('input', updateDraftTokens);
   root.append(
     el(
       'div',
       { class: 'input-hint' },
-      el('span', {},
-        state.settings.sendOnEnter ? 'Enter to send · Shift+Enter for newline · Esc to stop' : '⌘Enter to send · Esc to stop'),
+      el('span', {}, state.settings.sendOnEnter ? t('chat.hintEnter') : t('chat.hintMetaEnter')),
       draftTokens
     )
   );
@@ -943,9 +985,9 @@ function uploadURL(file) {
 async function saveAttachmentToDisk(a) {
   try {
     const dest = await window.tavern.files.exportUpload(a.file);
-    if (dest) toast(`Saved to ${dest}`, 'ok');
+    if (dest) toast(t('chat.savedTo', { dest }), 'ok');
   } catch (err) {
-    toast(`Save failed: ${err.message}`, 'error');
+    toast(t('chat.saveFailed', { msg: err.message }), 'error');
   }
 }
 
@@ -959,7 +1001,7 @@ function openImageViewer(a) {
         'div',
         { class: 'modal-actions', style: { alignItems: 'center', justifyContent: 'space-between' } },
         el('span', { class: 'hint' }, a.name),
-        el('button', { class: 'btn btn-primary', onclick: () => saveAttachmentToDisk(a) }, 'Save Image…')
+        el('button', { class: 'btn btn-primary', onclick: () => saveAttachmentToDisk(a) }, t('chat.saveImage'))
       )
     ),
     { width: 900 }
@@ -981,7 +1023,7 @@ function attachmentStrip(msg) {
               class: 'msg-attachment-img',
               src: uploadURL(a.file),
               alt: a.name,
-              title: `${a.name} — click to view`,
+              title: t('chat.attachmentView', { name: a.name }),
               onclick: () => openImageViewer(a),
               // Images load after the scroll position is set and grow the
               // message under the viewport — re-anchor unless the user
@@ -989,7 +1031,7 @@ function attachmentStrip(msg) {
             }),
             el('button', {
               class: 'btn-icon img-save-btn',
-              title: 'Save image (defaults to Downloads)',
+              title: t('chat.saveImageTitle'),
               onclick: (e) => {
                 e.stopPropagation();
                 saveAttachmentToDisk(a);
@@ -1012,7 +1054,7 @@ function messageEl(msg, index) {
   if (msg.__streaming && !msg.mes) {
     content.append(streamingDots());
   } else {
-    content.innerHTML = renderMarkdown(msg.mes);
+    content.innerHTML = renderedMarkdown(msg);
   }
   if (msg.__streaming) {
     streamingMsgEl = content;
@@ -1026,16 +1068,16 @@ function messageEl(msg, index) {
   const actions = el(
     'div',
     { class: 'msg-actions' },
-    el('button', { class: 'btn-icon', title: 'Copy', 'aria-label': 'Copy message', onclick: () => { navigator.clipboard.writeText(msg.mes); toast('Copied'); } }, '⧉'),
-    el('button', { class: 'btn-icon', title: 'Edit', 'aria-label': 'Edit message', onclick: () => editMessage(msg, index) }, '✎'),
+    el('button', { class: 'btn-icon', title: t('common.copy'), 'aria-label': t('chat.copyMessage'), onclick: () => { navigator.clipboard.writeText(msg.mes); toast(t('common.copied')); } }, '⧉'),
+    el('button', { class: 'btn-icon', title: t('chat.edit'), 'aria-label': t('chat.editMessage'), onclick: () => editMessage(msg, index) }, '✎'),
     isLastAssistant
-      ? el('button', { class: 'btn-icon', title: 'Regenerate (⌘R)', 'aria-label': 'Regenerate response', onclick: () => regenerateLast() }, '↻')
+      ? el('button', { class: 'btn-icon', title: t('chat.regenerateTitle'), 'aria-label': t('chat.regenerateAria'), onclick: () => regenerateLast() }, '↻')
       : null,
     isLastAssistant && msg.mes.trim()
-      ? el('button', { class: 'btn-icon', title: 'Continue this response', 'aria-label': 'Continue this response', onclick: () => continueLast() }, '⤻')
+      ? el('button', { class: 'btn-icon', title: t('chat.continueResponse'), 'aria-label': t('chat.continueResponse'), onclick: () => continueLast() }, '⤻')
       : null,
-    el('button', { class: 'btn-icon', title: 'Branch a new chat from here', 'aria-label': 'Branch a new chat from here', onclick: () => branchFrom(index) }, '⑂'),
-    el('button', { class: 'btn-icon', title: 'Delete', 'aria-label': 'Delete message', onclick: () => deleteMessage(index) }, '🗑')
+    el('button', { class: 'btn-icon', title: t('chat.branch'), 'aria-label': t('chat.branch'), onclick: () => branchFrom(index) }, '⑂'),
+    el('button', { class: 'btn-icon', title: t('common.delete'), 'aria-label': t('chat.deleteMessage'), onclick: () => deleteMessage(index) }, '🗑')
   );
 
   const body = el(
@@ -1048,7 +1090,10 @@ function messageEl(msg, index) {
       el('span', {
         class: 'msg-time',
         title: msg.extra?.cost
-          ? `~${msg.extra.cost.inTokens.toLocaleString()} in → ${msg.extra.cost.outTokens.toLocaleString()} out tokens` +
+          ? t('chat.costTooltip', {
+              inTokens: msg.extra.cost.inTokens.toLocaleString(),
+              outTokens: msg.extra.cost.outTokens.toLocaleString(),
+            }) +
             (msg.extra.cost.usd != null ? ` · ~${formatUSD(msg.extra.cost.usd)}` : '') +
             (msg.extra.cost.model ? ` · ${msg.extra.cost.model}` : '')
           : undefined,
@@ -1069,12 +1114,12 @@ function messageEl(msg, index) {
       el(
         'div',
         { class: 'swipe-bar' },
-        el('button', { class: 'btn-icon', title: 'Previous response', 'aria-label': 'Previous response', disabled: current <= 1, onclick: () => swipeAt(index, -1) }, '‹'),
+        el('button', { class: 'btn-icon', title: t('chat.prevResponse'), 'aria-label': t('chat.prevResponse'), disabled: current <= 1, onclick: () => swipeAt(index, -1) }, '‹'),
         el('span', {}, `${current} / ${count}`),
         el('button', {
           class: 'btn-icon',
-          title: count > current ? 'Next response' : 'Generate alternative',
-          'aria-label': count > current ? 'Next response' : 'Generate alternative',
+          title: count > current ? t('chat.nextResponse') : t('chat.generateAlternative'),
+          'aria-label': count > current ? t('chat.nextResponse') : t('chat.generateAlternative'),
           disabled: !canGenerate && current >= count,
           onclick: () => swipeAt(index, 1),
         }, '›')
@@ -1107,20 +1152,20 @@ function scrollToBottom(force) {
 // ---------------------------------------------------------------------------
 // Attachments
 
-const ATTACH_FILTERS = [
-  { name: 'Images & text files', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'txt', 'md', 'csv', 'log', 'json', 'xml', 'yaml', 'yml', 'html', 'css', 'js', 'ts', 'py', 'pdf'] },
-  { name: 'All files', extensions: ['*'] },
+const attachFilters = () => [
+  { name: t('chat.filterImagesText'), extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'txt', 'md', 'csv', 'log', 'json', 'xml', 'yaml', 'yml', 'html', 'css', 'js', 'ts', 'py', 'pdf'] },
+  { name: t('chat.filterAll'), extensions: ['*'] },
 ];
 
 /** Attachments the model can't read (PDF etc.) are sent as a filename mention only — say so. */
 function warnUnreadableAttachment(attachment) {
   if (attachment?.kind === 'file') {
-    toast(`${attachment.name}: the model will see the filename only — this file type isn't readable yet`);
+    toast(t('chat.unreadableAttachment', { name: attachment.name }));
   }
 }
 
 async function attachFiles() {
-  const files = await window.tavern.dialog.openFile({ multi: true, filters: ATTACH_FILTERS });
+  const files = await window.tavern.dialog.openFile({ multi: true, filters: attachFilters() });
   let staged = 0;
   for (const path of files) {
     try {
@@ -1129,7 +1174,7 @@ async function attachFiles() {
       warnUnreadableAttachment(attachment);
       staged++;
     } catch (err) {
-      toast(`Could not attach file: ${err.message}`, 'error');
+      toast(t('chat.couldNotAttachFile', { msg: err.message }), 'error');
     }
   }
   if (staged) renderChat();
@@ -1146,7 +1191,7 @@ async function stageFileObject(file) {
   try {
     pendingAttachments.push(await window.tavern.files.saveUpload(file.name || 'pasted.png', dataURL));
   } catch (err) {
-    toast(`Could not attach ${file.name || 'file'}: ${err.message}`, 'error');
+    toast(t('chat.couldNotAttach', { name: file.name || 'file', msg: err.message }), 'error');
   }
 }
 
@@ -1165,13 +1210,18 @@ async function resolveAttachments(messages) {
     const resolved = [];
     for (const a of attachments) {
       let data = resolvedUploads.get(a.file);
-      if (!data) {
+      if (data) {
+        resolvedUploads.delete(a.file); // re-insert below to mark most-recently-used
+      } else {
         try {
           data = await window.tavern.files.readUpload(a.file);
         } catch {
           data = { kind: a.kind }; // missing file → name-only mention
         }
-        resolvedUploads.set(a.file, data);
+      }
+      resolvedUploads.set(a.file, data);
+      if (resolvedUploads.size > RESOLVED_UPLOADS_MAX) {
+        resolvedUploads.delete(resolvedUploads.keys().next().value); // evict least-recently-used
       }
       resolved.push({ ...a, ...data });
     }
@@ -1192,7 +1242,7 @@ export async function sendMessage({ asImage = false } = {}) {
   const attachments = pendingAttachments;
   const lastIsUser = state.currentChat.messages.at(-1)?.is_user;
   if (useImage && !text && !attachments.length) {
-    toast('Describe the image you want to generate', 'error');
+    toast(t('chat.describeImage'), 'error');
     return;
   }
   // Empty input only allowed to continue after a user msg
@@ -1211,7 +1261,7 @@ export async function sendMessage({ asImage = false } = {}) {
     pendingAttachments = [];
     // Chat mode: title the conversation after its first message
     if (isChatMode() && !state.currentChat.metadata.title && text) {
-      state.currentChat.metadata.title = text.slice(0, 64);
+      state.currentChat.metadata.title = truncateChars(text, 64);
       await persistChat();
       await refreshConversations();
     } else {
@@ -1276,12 +1326,12 @@ async function generateResponse({
   setNotice(charName, chat.file, { error: null, finishReason: null, configOverride });
 
   if (PROVIDERS[config.provider].requiresKey && !config.apiKey) {
-    setNotice(charName, chat.file, { error: `No API key set for ${PROVIDERS[config.provider].label}. Add one in Settings → API.` });
+    setNotice(charName, chat.file, { error: t('chat.noKeyError', { label: PROVIDERS[config.provider].label }) });
     if (foreground()) renderChat();
     return;
   }
   if (PROVIDERS[config.provider].requiresBaseURL && !config.baseURL) {
-    setNotice(charName, chat.file, { error: 'No server URL set for the custom provider. Add one in Settings → API.' });
+    setNotice(charName, chat.file, { error: t('chat.noURLError') });
     if (foreground()) renderChat();
     return;
   }
@@ -1337,7 +1387,14 @@ async function generateResponse({
     promptTokens: stats.promptTokens ?? 0,
   };
   state.runs.set(requestId, run);
-  devLog('REQ', `${config.provider}/${config.model} · ${prompt.length} messages · ~${stats.promptTokens} tokens${trimmed ? ` · ${trimmed} trimmed` : ''} · ${JSON.stringify(prompt.at(-1))?.slice(0, 300)}`);
+  // Guarded here (not just inside devLog): stringifying the last message
+  // would serialize any attached images' multi-MB data URLs on every send,
+  // even with developer mode off.
+  if (state.settings.developerMode) {
+    const { images, ...lastMsg } = prompt.at(-1) ?? {};
+    const imageNote = images?.length ? `[${images.length} image(s)] ` : '';
+    devLog('REQ', `${config.provider}/${config.model} · ${prompt.length} messages · ~${stats.promptTokens} tokens${trimmed ? ` · ${trimmed} trimmed` : ''} · ${imageNote}${JSON.stringify(lastMsg)?.slice(0, 300)}`);
+  }
   // A fresh send jumps to the new message; continuations (regenerate,
   // continue, image reroute) keep whatever position the user is at.
   if (foreground()) renderChat({ scrollBottom: !intoMessage });
@@ -1458,15 +1515,13 @@ function editMessage(msg, index) {
     el(
       'div',
       { class: 'msg-edit-actions' },
-      el('button', { class: 'btn btn-small', onclick: () => renderChat() }, 'Cancel'),
+      el('button', { class: 'btn btn-small', onclick: () => renderChat() }, t('common.cancel')),
       msg.is_user
         ? el(
             'button',
             {
               class: 'btn btn-small',
-              title: rewinds
-                ? 'Save the edit, remove the messages after it, and regenerate the response (⌘Z undoes)'
-                : 'Save the edit and regenerate the response',
+              title: rewinds ? t('chat.saveRegenRewindTitle') : t('chat.saveRegenTitle'),
               onclick: async () => {
                 await save();
                 if (lastIsReplyToThis) {
@@ -1481,7 +1536,7 @@ function editMessage(msg, index) {
                 }
               },
             },
-            'Save & Regenerate'
+            t('chat.saveRegenerate')
           )
         : null,
       el(
@@ -1493,7 +1548,7 @@ function editMessage(msg, index) {
             renderChat();
           },
         },
-        'Save'
+        t('common.save')
       )
     )
   );
@@ -1514,7 +1569,7 @@ export async function chatUndo() {
   if (popUndo()) {
     await persistChat();
     renderChat();
-    toast('Undone');
+    toast(t('chat.undone'));
   }
 }
 
@@ -1527,7 +1582,7 @@ async function branchFrom(index) {
   const messages = src.messages.slice(0, index + 1).map(({ __streaming, ...m }) => m);
   const metadata = {
     ...branch.metadata,
-    ...(src.metadata.title ? { title: `${src.metadata.title} (branch)` } : {}),
+    ...(src.metadata.title ? { title: `${src.metadata.title}${t('chat.branchSuffix')}` } : {}),
     branchedFrom: { file: src.file, index },
   };
   // Branches never inherit the source's compression summary — the copied
@@ -1538,7 +1593,7 @@ async function branchFrom(index) {
   state.undoStack = [];
   if (isChatMode()) await refreshConversations();
   renderChat({ scrollBottom: true });
-  toast('Branched into a new chat — the original is in History');
+  toast(t('chat.branched'));
 }
 
 /**
@@ -1588,7 +1643,7 @@ async function impersonate() {
   } catch (err) {
     impersonating = false;
     if (state.currentChat === chatRef) renderChat();
-    toast(`Impersonate failed: ${err.message}`, 'error');
+    toast(t('chat.impersonateFailed', { msg: err.message }), 'error');
   }
 }
 
@@ -1601,28 +1656,24 @@ function openAuthorsNote() {
   const current = chat.metadata.authorsNote ?? { text: '', depth: 4 };
   const textarea = el('textarea', {
     rows: 5,
-    placeholder: chatty
-      ? 'e.g. "Answer in Spanish. I\'m a beginner programmer — explain code line by line."'
-      : 'e.g. "Focus on the heist plan. Keep the pacing tense. No time skips."',
+    placeholder: chatty ? t('chat.instructionsPlaceholder') : t('chat.authorsNotePlaceholder'),
   }, current.text ?? '');
   const depthInput = el('input', { type: 'number', min: 0, max: 20, value: current.depth ?? 4, style: { maxWidth: '80px' } });
   const content = el(
     'div',
     {},
-    el('h2', {}, chatty ? 'Conversation Instructions' : "Author's Note"),
+    el('h2', {}, chatty ? t('chat.conversationInstructions') : t('chat.authorsNote')),
     el('p', { class: 'hint', style: { marginBottom: '10px' } },
-      chatty
-        ? 'Extra instructions for this conversation only, injected near the end of the prompt where the model pays the most attention.'
-        : 'Guidance for this chat only, injected near the end of the prompt where the model pays the most attention. Supports {{char}} and {{user}}.'),
+      chatty ? t('chat.instructionsHint') : t('chat.authorsNoteHint')),
     textarea,
     chatty
       ? null
       : el('div', { class: 'form-inline', style: { marginTop: '10px' } },
-          el('label', { style: { margin: 0 } }, 'Insertion depth (messages from the end)'), depthInput),
+          el('label', { style: { margin: 0 } }, t('chat.insertionDepth')), depthInput),
     el(
       'div',
       { class: 'modal-actions' },
-      el('button', { class: 'btn', onclick: () => overlay.close() }, 'Cancel'),
+      el('button', { class: 'btn', onclick: () => overlay.close() }, t('common.cancel')),
       el('button', {
         class: 'btn btn-primary',
         onclick: async () => {
@@ -1633,9 +1684,9 @@ function openAuthorsNote() {
           await persistChat();
           overlay.close();
           renderChat();
-          toast(text ? "Author's note saved" : "Author's note cleared", 'ok');
+          toast(text ? t('chat.authorsNoteSaved') : t('chat.authorsNoteCleared'), 'ok');
         },
-      }, 'Save')
+      }, t('common.save'))
     )
   );
   const overlay = modal(content, { width: 540 });
@@ -1651,10 +1702,9 @@ function openSummaryEditor() {
   const content = el(
     'div',
     {},
-    el('h2', {}, 'Compressed History'),
+    el('h2', {}, t('chat.compressedHistory')),
     el('p', { class: 'hint', style: { marginBottom: '10px' } },
-      `The oldest ${Math.min(summary.upToIndex ?? 0, chat.messages.length)} messages are sent as this summary instead of verbatim. ` +
-        'Edit it to correct what the model remembers, or clear it to resend the full history.'),
+      t('chat.summaryHint', { count: Math.min(summary.upToIndex ?? 0, chat.messages.length) })),
     textarea,
     el(
       'div',
@@ -1666,11 +1716,11 @@ function openSummaryEditor() {
           await persistChatMetadata(chat);
           overlay.close();
           renderChat();
-          toast('Summary cleared — the full history will be sent again', 'ok');
+          toast(t('chat.summaryCleared'), 'ok');
         },
-      }, 'Clear Summary'),
+      }, t('chat.clearSummary')),
       el('div', { class: 'form-inline' },
-        el('button', { class: 'btn', onclick: () => overlay.close() }, 'Cancel'),
+        el('button', { class: 'btn', onclick: () => overlay.close() }, t('common.cancel')),
         el('button', {
           class: 'btn btn-primary',
           onclick: async () => {
@@ -1680,9 +1730,9 @@ function openSummaryEditor() {
             await persistChatMetadata(chat);
             overlay.close();
             renderChat();
-            toast('Summary updated', 'ok');
+            toast(t('chat.summaryUpdated'), 'ok');
           },
-        }, 'Save'))
+        }, t('common.save')))
     )
   );
   const overlay = modal(content, { width: 620 });
@@ -1691,7 +1741,7 @@ function openSummaryEditor() {
 /** Quick model switcher on the toolbar model chip. */
 function openModelSwitcher() {
   const s = state.settings;
-  const content = el('div', {}, el('h2', {}, 'Model'));
+  const content = el('div', {}, el('h2', {}, t('chat.model')));
   const results = el('div', { class: 'search-results' });
   const pick = (provider, model) => {
     s.activeAPI = provider;
@@ -1711,7 +1761,7 @@ function openModelSwitcher() {
     scheduleSettingsSave();
     overlay.close();
     renderChat();
-    toast(`Switched to ${model}`, 'ok');
+    toast(t('chat.switchedTo', { model }), 'ok');
   };
   const row = (provider, model, sub) =>
     el(
@@ -1725,27 +1775,27 @@ function openModelSwitcher() {
   const recents = (s.recentModels ?? []).filter(
     (r) => PROVIDERS[r.provider] && !(r.provider === s.activeAPI && r.model === apiConfig().model)
   );
-  const filter = el('input', { type: 'text', placeholder: 'Search models…' });
+  const filter = el('input', { type: 'text', placeholder: t('chat.searchModels') });
   let available = [];
   const renderList = () => {
     clear(results);
     const q = filter.value.trim().toLowerCase();
     if (!q && recents.length) {
-      results.append(el('div', { class: 'hint', style: { margin: '6px 0' } }, 'Recent'));
+      results.append(el('div', { class: 'hint', style: { margin: '6px 0' } }, t('chat.recent')));
       for (const r of recents.slice(0, 5)) results.append(row(r.provider, r.model));
     }
     const matches = available.filter((m) => !q || m.id.toLowerCase().includes(q) || (m.name ?? '').toLowerCase().includes(q));
     if (available.length) {
-      results.append(el('div', { class: 'hint', style: { margin: '6px 0' } }, `${PROVIDERS[s.activeAPI].label} models`));
+      results.append(el('div', { class: 'hint', style: { margin: '6px 0' } }, t('chat.providerModels', { label: PROVIDERS[s.activeAPI].label })));
       for (const m of matches.slice(0, 30)) {
         const parts = [];
         if (m.name && m.name !== m.id) parts.push(m.name);
-        if (m.context) parts.push(`${m.context.toLocaleString()} ctx`);
+        if (m.context) parts.push(t('chat.ctxTokens', { count: m.context.toLocaleString() }));
         const price = formatModelPricing(m.pricing);
         if (price) parts.push(price);
         results.append(row(s.activeAPI, m.id, parts.join(' · ') || undefined));
       }
-      if (!matches.length) results.append(el('p', { class: 'hint' }, 'No matching models.'));
+      if (!matches.length) results.append(el('p', { class: 'hint' }, t('chat.noMatchingModels')));
     }
   };
   filter.addEventListener('input', renderList);
@@ -1756,13 +1806,13 @@ function openModelSwitcher() {
       renderList();
     })
     .catch((err) => {
-      results.append(el('p', { class: 'hint', style: { color: 'var(--danger)' } }, `Could not load models: ${err.message}`));
+      results.append(el('p', { class: 'hint', style: { color: 'var(--danger)' } }, t('chat.couldNotLoadModels', { msg: err.message })));
     });
   content.append(
     el('div', { class: 'form-inline' }, filter),
     results,
     el('div', { class: 'modal-actions' },
-      el('button', { class: 'btn', onclick: () => { overlay.close(); cb.openSettings?.('api'); } }, 'Open API Settings…'))
+      el('button', { class: 'btn', onclick: () => { overlay.close(); cb.openSettings?.('api'); } }, t('chat.openAPISettings')))
   );
   const overlay = modal(content, { width: 520 });
   renderList();
@@ -1810,18 +1860,18 @@ export async function openHistory() {
     el(
       'div',
       { class: 'form-inline', style: { justifyContent: 'space-between' } },
-      el('h2', {}, 'Chat History'),
+      el('h2', {}, t('chat.chatHistory')),
       el('button', {
         class: 'btn btn-small',
-        title: 'Import a SillyTavern or OpenChat .jsonl chat file',
+        title: t('chat.importChatTitle'),
         onclick: async () => {
           if (await importChatFile(charName)) overlay.close();
         },
-      }, 'Import Chat…')
+      }, t('chat.importChat'))
     )
   );
   const list = el('div', { class: 'search-results' });
-  if (!chats.length) list.append(el('p', { style: { color: 'var(--text-dim)' } }, 'No previous chats.'));
+  if (!chats.length) list.append(el('p', { style: { color: 'var(--text-dim)' } }, t('chat.noPreviousChats')));
   for (const chatInfo of chats) {
     const isCurrent = chatInfo.file === state.currentChat?.file;
     list.append(
@@ -1831,26 +1881,19 @@ export async function openHistory() {
         el(
           'div',
           { class: 'list-main', onclick: async () => { overlay.close(); await loadChat(chatInfo.file); } },
-          el('div', { class: 'list-title' }, `${new Date(chatInfo.metadata.create_date ?? chatInfo.mtime).toLocaleString()}${isCurrent ? ' · current' : ''}`),
-          el('div', { class: 'list-sub' }, `${chatInfo.messageCount} messages · ${chatInfo.preview}`)
+          el('div', { class: 'list-title' }, `${new Date(chatInfo.metadata.create_date ?? chatInfo.mtime).toLocaleString(currentLocale())}${isCurrent ? t('chat.currentMarker') : ''}`),
+          el('div', { class: 'list-sub' }, `${t('common.nMessages', { count: chatInfo.messageCount })} · ${chatInfo.preview}`)
         ),
-        el('button', { class: 'btn-icon', title: 'Export as Markdown', 'aria-label': 'Export as Markdown', onclick: () => exportChat(charName, chatInfo.file, 'markdown') }, 'MD'),
-        el('button', { class: 'btn-icon', title: 'Export as JSONL', 'aria-label': 'Export as JSONL', onclick: () => exportChat(charName, chatInfo.file, 'jsonl') }, '{}'),
+        el('button', { class: 'btn-icon', title: t('sidebar.exportMarkdown'), 'aria-label': t('sidebar.exportMarkdown'), onclick: () => exportChat(charName, chatInfo.file, 'markdown') }, 'MD'),
+        el('button', { class: 'btn-icon', title: t('sidebar.exportJSONL'), 'aria-label': t('sidebar.exportJSONL'), onclick: () => exportChat(charName, chatInfo.file, 'jsonl') }, '{}'),
         el('button', {
           class: 'btn-icon',
-          title: 'Delete chat',
-          'aria-label': 'Delete chat',
+          title: t('chat.deleteChat'),
+          'aria-label': t('chat.deleteChat'),
           onclick: async () => {
-            const ok = await confirmDialog('Delete this chat?');
+            const ok = await confirmDialog(t('chat.deleteChatConfirm'));
             if (!ok) return;
-            // Drop the run before aborting so the aborted event can't
-            // persist into (and resurrect) the deleted file
-            const run = runFor(charName, chatInfo.file);
-            if (run) {
-              state.runs.delete(run.requestId);
-              window.tavern.llm.stop(run.requestId);
-            }
-            clearUnread(charName, chatInfo.file);
+            forgetChat(charName, chatInfo.file);
             await window.tavern.chats.delete(charName, chatInfo.file);
             if (isChatMode()) await refreshConversations();
             overlay.close();
@@ -1859,7 +1902,7 @@ export async function openHistory() {
               if (remaining.length) await loadChat(remaining[0].file);
               else await newChat();
             }
-            toast('Chat deleted');
+            toast(t('chat.chatDeleted'));
           },
         }, '🗑')
       )
@@ -1872,9 +1915,9 @@ export async function openHistory() {
 async function exportChat(charName, file, format) {
   try {
     const saved = await window.tavern.chats.export(charName, file, format);
-    if (saved) toast('Chat exported', 'ok');
+    if (saved) toast(t('chat.chatExported'), 'ok');
   } catch (err) {
-    toast(`Export failed: ${err.message}`, 'error');
+    toast(t('common.exportFailed', { msg: err.message }), 'error');
   }
 }
 
@@ -1886,12 +1929,12 @@ function exportCurrentChat() {
   const content = el(
     'div',
     {},
-    el('h2', {}, 'Export Chat'),
+    el('h2', {}, t('chat.exportChat')),
     el(
       'div',
       { class: 'modal-actions', style: { justifyContent: 'flex-start' } },
-      el('button', { class: 'btn btn-primary', onclick: () => { overlay.close(); exportChat(charName, file, 'markdown'); } }, 'Markdown'),
-      el('button', { class: 'btn btn-primary', onclick: () => { overlay.close(); exportChat(charName, file, 'jsonl'); } }, 'JSONL'),
+      el('button', { class: 'btn btn-primary', onclick: () => { overlay.close(); exportChat(charName, file, 'markdown'); } }, t('chat.exportMarkdown')),
+      el('button', { class: 'btn btn-primary', onclick: () => { overlay.close(); exportChat(charName, file, 'jsonl'); } }, t('chat.exportJSONL')),
       el('button', {
         class: 'btn',
         onclick: () => {
@@ -1899,9 +1942,9 @@ function exportCurrentChat() {
             state.currentChat.messages.map((m) => `${m.name}: ${m.mes}`).join('\n\n')
           );
           overlay.close();
-          toast('Chat copied to clipboard', 'ok');
+          toast(t('chat.copiedToClipboard'), 'ok');
         },
-      }, 'Copy as Text')
+      }, t('chat.copyAsText'))
     )
   );
   const overlay = modal(content, { width: 420 });
@@ -1910,29 +1953,29 @@ function exportCurrentChat() {
 /** Import a SillyTavern/OpenChat JSONL chat file for the current character. */
 async function importChatFile(charName) {
   const files = await window.tavern.dialog.openFile({
-    filters: [{ name: 'Chat JSONL', extensions: ['jsonl'] }],
+    filters: [{ name: t('chat.filterChatJSONL'), extensions: ['jsonl'] }],
   });
   if (!files?.[0]) return false;
   try {
     const file = await window.tavern.chats.import(charName, files[0]);
-    toast('Chat imported', 'ok');
+    toast(t('chat.chatImported'), 'ok');
     if (isChatMode()) await refreshConversations();
     await loadChat(file);
     return true;
   } catch (err) {
-    toast(`Import failed: ${err.message}`, 'error');
+    toast(t('common.importFailed', { msg: err.message }), 'error');
     return false;
   }
 }
 
 export function openSearch(initialQuery = '', initialScope = 'current') {
-  const content = el('div', {}, el('h2', {}, 'Search'));
-  const input = el('input', { type: 'text', placeholder: 'Search messages…', value: initialQuery });
+  const content = el('div', {}, el('h2', {}, t('chat.search')));
+  const input = el('input', { type: 'text', placeholder: t('chat.searchMessages'), value: initialQuery });
   const scope = el(
     'select',
     { style: { width: 'auto' } },
-    el('option', { value: 'current' }, 'This conversation'),
-    el('option', { value: 'all' }, 'All chats')
+    el('option', { value: 'current' }, t('chat.scopeCurrent')),
+    el('option', { value: 'all' }, t('chat.scopeAll'))
   );
   scope.value = initialScope;
   const results = el('div', { class: 'search-results' });
@@ -1945,10 +1988,11 @@ export function openSearch(initialQuery = '', initialScope = 'current') {
     if (q.length < 2) return;
     if (scope.value === 'current' && state.currentChat) {
       const matches = [];
+      const folded = foldText(q);
       state.currentChat.messages.forEach((m, index) => {
-        if ((m.mes ?? '').toLowerCase().includes(q.toLowerCase())) matches.push({ m, index });
+        if (foldText(m.mes ?? '').includes(folded)) matches.push({ m, index });
       });
-      if (!matches.length) results.append(el('p', { style: { color: 'var(--text-dim)' } }, 'No matches.'));
+      if (!matches.length) results.append(el('p', { style: { color: 'var(--text-dim)' } }, t('common.noMatches')));
       for (const { m, index } of matches) {
         results.append(
           searchRow(m.name, m.mes, q, () => {
@@ -1962,7 +2006,7 @@ export function openSearch(initialQuery = '', initialScope = 'current') {
       // Chat mode: "all chats" means all assistant conversations
       const scopeName = isChatMode() ? ASSISTANT_NAME : scope.value === 'all' ? null : charName;
       const hits = await window.tavern.chats.search(q, scopeName);
-      if (!hits.length) results.append(el('p', { style: { color: 'var(--text-dim)' } }, 'No matches.'));
+      if (!hits.length) results.append(el('p', { style: { color: 'var(--text-dim)' } }, t('common.noMatches')));
       for (const hit of hits) {
         results.append(
           searchRow(`${hit.characterName} · ${hit.name}`, hit.snippet, q, async () => {

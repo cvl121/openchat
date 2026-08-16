@@ -2,8 +2,12 @@
 // Chat mode swaps the character list for the assistant's conversation list.
 
 import { el, clear, relativeDate, toast, confirmDialog, promptDialog, stripMarkdown } from '../util.js';
-import { state, avatarURL, scheduleSettingsSave, isChatMode, runFor, isUnread } from '../state.js';
+import { state, avatarURL, scheduleSettingsSave, isChatMode, runFor, isUnread, filterCharacters, ASSISTANT_CHARACTER } from '../state.js';
 import { avatar, streamingDots } from '../components.js';
+import { t } from '../../../shared/i18n.js';
+import { foldText, truncateChars } from '../../../shared/text.js';
+
+const ASSISTANT_NAME = ASSISTANT_CHARACTER.card.data.name;
 
 let callbacks = {}; // { selectCharacter, selectConversation, newChat, navigate, newCharacter, editCharacter, globalSearch }
 
@@ -25,9 +29,9 @@ export function initSidebar(cb) {
       if (!path) continue;
       try {
         await window.tavern.characters.import(path);
-        toast(`Imported ${file.name}`, 'ok');
+        toast(t('sidebar.imported', { name: file.name }), 'ok');
       } catch (err) {
-        toast(`Import failed: ${err.message}`, 'error');
+        toast(t('common.importFailed', { msg: err.message }), 'error');
       }
     }
     await callbacks.reloadCharacters?.();
@@ -74,7 +78,7 @@ function applySidebarCollapsed() {
   const collapsed = !!state.settings?.sidebarCollapsed;
   document.getElementById('app').classList.toggle('sidebar-collapsed', collapsed);
   const btn = document.getElementById('sidebar-toggle');
-  const label = `${collapsed ? 'Show' : 'Hide'} sidebar (${SHORTCUT_HINT})`;
+  const label = t(collapsed ? 'sidebar.showSidebar' : 'sidebar.hideSidebar', { hint: SHORTCUT_HINT });
   btn.title = label;
   btn.setAttribute('aria-label', label);
   btn.setAttribute('aria-expanded', String(!collapsed));
@@ -87,7 +91,7 @@ function renderSearch() {
   clear(host);
   const input = el('input', {
     type: 'text',
-    placeholder: isChatMode() ? 'Search conversations…' : 'Search characters & chats…',
+    placeholder: isChatMode() ? t('sidebar.searchConversations') : t('sidebar.searchCharacters'),
     value: searchQuery,
   });
   input.addEventListener('input', () => {
@@ -106,7 +110,7 @@ export function renderSidebar() {
   // Keep the search placeholder in sync when the app mode changes
   const search = document.querySelector('#sidebar-search input');
   if (search) {
-    search.placeholder = isChatMode() ? 'Search conversations…' : 'Search characters & chats…';
+    search.placeholder = isChatMode() ? t('sidebar.searchConversations') : t('sidebar.searchCharacters');
   }
   renderList();
   renderNav();
@@ -118,35 +122,28 @@ function renderList() {
   clear(host);
 
   const q = searchQuery.trim().toLowerCase();
-  let chars = state.characters;
-  if (q) {
-    chars = chars.filter(
-      (c) =>
-        c.card.data.name.toLowerCase().includes(q) ||
-        (c.card.data.tags ?? []).some((t) => t.toLowerCase().includes(q))
-    );
-  }
+  const chars = filterCharacters(state.characters, searchQuery);
 
   const pinned = new Set(state.settings?.pinnedCharacters ?? []);
   const pinnedChars = chars.filter((c) => pinned.has(c.filename));
   const rest = chars.filter((c) => !pinned.has(c.filename));
 
   if (pinnedChars.length) {
-    host.append(el('div', { class: 'sidebar-section-title' }, 'Pinned'));
+    host.append(el('div', { class: 'sidebar-section-title' }, t('sidebar.pinned')));
     pinnedChars.forEach((c) => host.append(convRow(c, true)));
   }
-  host.append(el('div', { class: 'sidebar-section-title' }, 'Conversations'));
+  host.append(el('div', { class: 'sidebar-section-title' }, t('sidebar.conversations')));
   if (!rest.length && !pinnedChars.length) {
     host.append(
       el(
         'div',
         { style: { padding: '14px 10px', color: 'var(--text-dim)', fontSize: '12px' } },
-        q ? 'No matches.' : 'No characters yet. Create or import one below.'
+        q ? t('common.noMatches') : t('sidebar.noCharactersYet')
       ),
       el(
         'button',
         { class: 'btn btn-primary', style: { margin: '6px 8px' }, onclick: () => callbacks.newCharacter?.() },
-        '+ New Character'
+        t('sidebar.newCharacter')
       )
     );
   }
@@ -156,17 +153,17 @@ function renderList() {
 // --- Chat mode: assistant conversation list --------------------------------
 
 function conversationTitle(convo) {
-  return convo.metadata?.title || stripMarkdown(convo.preview ?? '').slice(0, 40) || 'New conversation';
+  return convo.metadata?.title || truncateChars(stripMarkdown(convo.preview ?? ''), 40) || t('sidebar.newConversation');
 }
 
 /** Sidebar bucket for a conversation's last-activity time. */
 function dateGroupLabel(mtime) {
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  if (mtime >= startOfToday) return 'Today';
-  if (mtime >= startOfToday - 86400e3) return 'Yesterday';
-  if (mtime >= startOfToday - 7 * 86400e3) return 'Previous 7 Days';
-  return 'Older';
+  if (mtime >= startOfToday) return t('dates.today');
+  if (mtime >= startOfToday - 86400e3) return t('dates.yesterday');
+  if (mtime >= startOfToday - 7 * 86400e3) return t('dates.previous7Days');
+  return t('dates.older');
 }
 
 function togglePinConversation(file) {
@@ -198,26 +195,26 @@ function renderConversationList() {
     el(
       'button',
       { class: 'btn btn-primary new-chat-btn', onclick: () => callbacks.newChat?.() },
-      '+ New Chat'
+      t('sidebar.newChat')
     )
   );
 
-  const q = searchQuery.trim().toLowerCase();
+  const q = foldText(searchQuery.trim());
   let convos = state.conversations;
   if (q) {
     convos = convos.filter(
       (c) =>
-        conversationTitle(c).toLowerCase().includes(q) ||
-        (c.preview ?? '').toLowerCase().includes(q)
+        foldText(conversationTitle(c)).includes(q) ||
+        foldText(c.preview ?? '').includes(q)
     );
   }
   if (!convos.length) {
     host.append(
-      el('div', { class: 'sidebar-section-title' }, 'Conversations'),
+      el('div', { class: 'sidebar-section-title' }, t('sidebar.conversations')),
       el(
         'div',
         { style: { padding: '14px 10px', color: 'var(--text-dim)', fontSize: '12px' } },
-        q ? 'No matches.' : 'No conversations yet.'
+        q ? t('common.noMatches') : t('sidebar.noConversationsYet')
       )
     );
     return;
@@ -227,7 +224,7 @@ function renderConversationList() {
   const pinnedConvos = convos.filter((c) => pins.has(c.file));
   const rest = convos.filter((c) => !pins.has(c.file));
   if (pinnedConvos.length) {
-    host.append(el('div', { class: 'sidebar-section-title' }, 'Pinned'));
+    host.append(el('div', { class: 'sidebar-section-title' }, t('sidebar.pinned')));
     for (const convo of pinnedConvos) host.append(conversationRow(convo, true));
   }
   // Already mtime-sorted, so group titles appear as the bucket changes
@@ -262,26 +259,26 @@ function conversationRow(convo, isPinned) {
       el(
         'div',
         { class: 'conv-sub' },
-        `${relativeDate(convo.mtime)} · ${convo.messageCount} messages`
+        `${relativeDate(convo.mtime)} · ${t('common.nMessages', { count: convo.messageCount })}`
       )
     ),
     rowIndicator({
-      processing: !!runFor('Assistant', convo.file),
-      unread: isUnread('Assistant', convo.file),
+      processing: !!runFor(ASSISTANT_NAME, convo.file),
+      unread: isUnread(ASSISTANT_NAME, convo.file),
     })
   );
   row.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     showMenu(e, [
-      [isPinned ? 'Unpin' : 'Pin', () => togglePinConversation(convo.file)],
-      ['Rename', async () => {
-        const title = await promptDialog('Rename conversation', { value: conversationTitle(convo), confirmLabel: 'Rename' });
+      [t(isPinned ? 'sidebar.unpin' : 'sidebar.pin'), () => togglePinConversation(convo.file)],
+      [t('common.rename'), async () => {
+        const title = await promptDialog(t('sidebar.renameConversation'), { value: conversationTitle(convo), confirmLabel: t('common.rename') });
         if (title?.trim()) await callbacks.renameConversation?.(convo.file, title.trim());
       }],
-      ['Export as Markdown', () => exportConversation(convo.file, 'markdown')],
-      ['Export as JSONL', () => exportConversation(convo.file, 'jsonl')],
-      ['Delete', async () => {
-        const ok = await confirmDialog('Delete this conversation?');
+      [t('sidebar.exportMarkdown'), () => exportConversation(convo.file, 'markdown')],
+      [t('sidebar.exportJSONL'), () => exportConversation(convo.file, 'jsonl')],
+      [t('common.delete'), async () => {
+        const ok = await confirmDialog(t('sidebar.deleteConversationConfirm'));
         if (ok) await callbacks.deleteConversation?.(convo.file);
       }, true],
     ]);
@@ -291,10 +288,10 @@ function conversationRow(convo, isPinned) {
 
 async function exportConversation(file, format) {
   try {
-    const saved = await window.tavern.chats.export('Assistant', file, format);
-    if (saved) toast('Conversation exported', 'ok');
+    const saved = await window.tavern.chats.export(ASSISTANT_NAME, file, format);
+    if (saved) toast(t('sidebar.conversationExported'), 'ok');
   } catch (err) {
-    toast(`Export failed: ${err.message}`, 'error');
+    toast(t('common.exportFailed', { msg: err.message }), 'error');
   }
 }
 
@@ -333,11 +330,11 @@ function convRow(character, isPinned) {
 
 function showContextMenu(event, character, isPinned) {
   showMenu(event, [
-    [isPinned ? 'Unpin' : 'Pin', () => togglePin(character)],
-    ['Edit Character', () => callbacks.editCharacter?.(character)],
-    ['Export as PNG', () => exportCharacter(character, 'png')],
-    ['Export as JSON', () => exportCharacter(character, 'json')],
-    ['Delete', () => deleteCharacter(character), true],
+    [t(isPinned ? 'sidebar.unpin' : 'sidebar.pin'), () => togglePin(character)],
+    [t('sidebar.editCharacter'), () => callbacks.editCharacter?.(character)],
+    [t('sidebar.exportPNG'), () => exportCharacter(character, 'png')],
+    [t('sidebar.exportJSON'), () => exportCharacter(character, 'json')],
+    [t('common.delete'), () => deleteCharacter(character), true],
   ]);
 }
 
@@ -347,35 +344,10 @@ function showMenu(event, items) {
     'div',
     {
       class: 'ctx-menu',
-      style: {
-        position: 'fixed',
-        left: `${event.clientX}px`,
-        top: `${event.clientY}px`,
-        background: 'var(--bg-raised)',
-        border: '1px solid var(--border)',
-        borderRadius: '8px',
-        padding: '4px',
-        zIndex: 150,
-        boxShadow: '0 8px 30px rgba(0,0,0,0.4)',
-        minWidth: '160px',
-      },
+      style: { left: `${event.clientX}px`, top: `${event.clientY}px` },
     },
     items.map(([label, action, danger]) => {
-      const item = el(
-        'div',
-        {
-          style: {
-            padding: '7px 12px',
-            borderRadius: '6px',
-            cursor: 'pointer',
-            color: danger ? 'var(--danger)' : 'var(--text)',
-            fontSize: '12.5px',
-          },
-        },
-        label
-      );
-      item.addEventListener('mouseenter', () => (item.style.background = 'var(--bg-hover)'));
-      item.addEventListener('mouseleave', () => (item.style.background = 'none'));
+      const item = el('div', { class: `ctx-menu-item${danger ? ' danger' : ''}` }, label);
       item.addEventListener('click', () => {
         menu.remove();
         action();
@@ -397,9 +369,9 @@ function showMenu(event, items) {
 async function exportCharacter(character, format) {
   try {
     const saved = await window.tavern.characters.export(character.filename, format);
-    if (saved) toast('Character exported', 'ok');
+    if (saved) toast(t('sidebar.characterExported'), 'ok');
   } catch (err) {
-    toast(`Export failed: ${err.message}`, 'error');
+    toast(t('common.exportFailed', { msg: err.message }), 'error');
   }
 }
 
@@ -414,12 +386,10 @@ function togglePin(character) {
 }
 
 async function deleteCharacter(character) {
-  const ok = await confirmDialog(
-    `Delete "${character.card.data.name}"? Chat history files are kept on disk.`
-  );
+  const ok = await confirmDialog(t('sidebar.deleteCharacterConfirm', { name: character.card.data.name }));
   if (!ok) return;
   await window.tavern.characters.delete(character.filename);
-  toast('Character deleted');
+  toast(t('sidebar.characterDeleted'));
   await callbacks.reloadCharacters?.();
 }
 
@@ -428,12 +398,12 @@ function renderNav() {
   clear(host);
   // Characters, world lore, and personas are role-play concepts
   const items = isChatMode()
-    ? [['settings', '⚙️', 'Settings']]
+    ? [['settings', '⚙️', t('nav.settings')]]
     : [
-        ['characters', '👥', 'Characters'],
-        ['worlds', '🌍', 'World Lore'],
-        ['personas', '🪪', 'Personas'],
-        ['settings', '⚙️', 'Settings'],
+        ['characters', '👥', t('nav.characters')],
+        ['worlds', '🌍', t('nav.worldLore')],
+        ['personas', '🪪', t('nav.personas')],
+        ['settings', '⚙️', t('nav.settings')],
       ];
   for (const [view, icon, label] of items) {
     host.append(

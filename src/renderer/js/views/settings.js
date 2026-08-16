@@ -23,6 +23,7 @@ import {
   rememberModelPricing,
 } from '../state.js';
 import { sliderRow, checkboxRow, textRow, textareaRow, selectRow } from '../components.js';
+import { t, LOCALES, LOCALE_LABELS } from '../../../shared/i18n.js';
 
 let cb = {}; // { applyAppearance, reloadAll, renderSidebar }
 let section = 'api';
@@ -37,14 +38,16 @@ export function showSettingsSection(id) {
 }
 
 const SECTIONS = () => [
-  ['api', 'API'],
-  ['general', 'General'],
-  ['chat', 'Chat Style'],
-  ['generation', 'Generation'],
+  ['api', t('settings.sectionAPI')],
+  ['general', t('settings.sectionGeneral')],
+  ['chat', t('settings.sectionChatStyle')],
+  ['generation', t('settings.sectionGeneration')],
   // Prompt overrides target character cards — role play only
-  ...(isAdvanced() ? [['presets', 'Presets'], ...(isChatMode() ? [] : [['prompts', 'Prompts']])] : []),
-  ['data', 'Data'],
-  ...(isAdvanced() && state.settings.developerMode ? [['developer', 'Developer']] : []),
+  ...(isAdvanced()
+    ? [['presets', t('settings.sectionPresets')], ...(isChatMode() ? [] : [['prompts', t('settings.sectionPrompts')]])]
+    : []),
+  ['data', t('settings.sectionData')],
+  ...(isAdvanced() && state.settings.developerMode ? [['developer', t('settings.sectionDeveloper')]] : []),
 ];
 
 export function renderSettings() {
@@ -116,10 +119,10 @@ function fillModelDatalist(datalist, models) {
 
 function renderAPI() {
   const s = state.settings;
-  const root = el('section', {}, el('h2', {}, 'AI Provider'));
+  const root = el('section', {}, el('h2', {}, t('settings.aiProvider')));
 
   root.append(
-    selectRow('Provider', {
+    selectRow(t('settings.provider'), {
       options: Object.entries(PROVIDERS).map(([id, p]) => [id, p.label]),
       get: () => s.activeAPI,
       set: (v) => {
@@ -127,7 +130,7 @@ function renderAPI() {
         scheduleSettingsSave();
         renderSettings();
       },
-      hint: 'OpenRouter is recommended: one key, hundreds of models.',
+      hint: t('settings.providerHint'),
     })
   );
 
@@ -136,7 +139,7 @@ function renderAPI() {
   // Custom OpenAI-compatible server: the base URL is the whole point, so it
   // lives here (not behind Advanced mode) and the key is optional.
   if (provider.requiresBaseURL) {
-    const urlRow = textRow('Server URL', {
+    const urlRow = textRow(t('settings.serverURL'), {
       get: () => s.baseURLs?.[s.activeAPI] ?? '',
       set: (v) => {
         s.baseURLs = s.baseURLs ?? {};
@@ -145,7 +148,7 @@ function renderAPI() {
         scheduleSettingsSave();
       },
       placeholder: 'http://localhost:1234/v1',
-      hint: 'Any OpenAI-compatible endpoint: LM Studio, vLLM, llama.cpp, Groq, Together, DeepSeek, Mistral, …',
+      hint: t('settings.serverURLHint'),
     });
     // Once the URL is committed, re-render so the model list loads from it
     urlRow.querySelector('input').addEventListener('change', () => renderSettings());
@@ -156,7 +159,9 @@ function renderAPI() {
     const keyInput = el('input', {
       type: 'password',
       value: s.apiKeys[s.activeAPI] ?? '',
-      placeholder: provider.requiresKey ? `${provider.label} API key` : 'API key (if your server needs one)',
+      placeholder: provider.requiresKey
+        ? t('settings.keyPlaceholder', { label: provider.label })
+        : t('settings.keyPlaceholderOptional'),
     });
     keyInput.addEventListener('input', () => {
       s.apiKeys[s.activeAPI] = keyInput.value.trim();
@@ -164,21 +169,21 @@ function renderAPI() {
     });
     // Once the key is entered, re-render so the model list loads with it
     keyInput.addEventListener('change', () => renderSettings());
-    const toggle = el('button', { class: 'btn' }, 'Show');
+    const toggle = el('button', { class: 'btn' }, t('common.show'));
     toggle.addEventListener('click', () => {
       const hidden = keyInput.type === 'password';
       keyInput.type = hidden ? 'text' : 'password';
-      toggle.textContent = hidden ? 'Hide' : 'Show';
+      toggle.textContent = hidden ? t('common.hide') : t('common.show');
     });
     root.append(
       el(
         'div',
         { class: 'form-row' },
-        el('label', {}, provider.requiresKey ? 'API Key' : 'API Key (optional)'),
+        el('label', {}, provider.requiresKey ? t('settings.apiKey') : t('settings.apiKeyOptional')),
         el('div', { class: 'form-inline' }, keyInput, toggle),
         provider.keyURL
           ? el('div', { class: 'hint' },
-              'Stored locally, only sent to the provider. Get a key: ',
+              t('settings.keyStoredProvider'),
               el('a', {
                 href: '#',
                 style: { color: 'var(--accent)' },
@@ -188,11 +193,11 @@ function renderAPI() {
                 },
               }, provider.keyURL)
             )
-          : el('div', { class: 'hint' }, 'Stored locally, only sent to your server.')
+          : el('div', { class: 'hint' }, t('settings.keyStoredServer'))
       )
     );
   } else if (s.activeAPI === 'ollama') {
-    root.append(el('p', { class: 'hint', style: { marginBottom: '12px' } }, 'Ollama runs locally — no API key needed. Make sure `ollama serve` is running.'));
+    root.append(el('p', { class: 'hint', style: { marginBottom: '12px' } }, t('settings.ollamaHint')));
   }
 
   // Model picker — the list loads automatically once a key is present
@@ -200,7 +205,7 @@ function renderAPI() {
     type: 'text',
     value: s.models?.[s.activeAPI] || provider.defaultModel,
     list: 'model-list',
-    placeholder: 'Model ID',
+    placeholder: t('settings.modelID'),
   });
   const datalist = el('datalist', { id: 'model-list' });
   let listedModels = []; // last fetched list, to cache the picked model's context
@@ -217,7 +222,7 @@ function renderAPI() {
     scheduleSettingsSave();
     rememberPicked();
   });
-  const refreshBtn = el('button', { class: 'btn' }, 'Refresh List');
+  const refreshBtn = el('button', { class: 'btn' }, t('settings.refreshList'));
   const modelHint = el('div', { class: 'hint' }, '');
   const loadMainModels = async (force) => {
     try {
@@ -225,34 +230,34 @@ function renderAPI() {
       listedModels = models;
       fillModelDatalist(datalist, models);
       rememberPicked();
-      modelHint.textContent = `${models.length} models available — type to search.`;
+      modelHint.textContent = t('settings.modelsAvailable', { count: models.length });
       modelHint.style.color = '';
     } catch (err) {
-      modelHint.textContent = `Could not load models: ${err.message}`;
+      modelHint.textContent = t('chat.couldNotLoadModels', { msg: err.message });
       modelHint.style.color = 'var(--danger)';
     }
   };
   refreshBtn.addEventListener('click', async () => {
     refreshBtn.disabled = true;
-    refreshBtn.textContent = 'Loading…';
+    refreshBtn.textContent = t('settings.loading');
     await loadMainModels(true);
     refreshBtn.disabled = false;
-    refreshBtn.textContent = 'Refresh List';
+    refreshBtn.textContent = t('settings.refreshList');
   });
   const canListModels = provider.requiresBaseURL
     ? !!s.baseURLs?.[s.activeAPI]
     : !provider.requiresKey || s.apiKeys[s.activeAPI];
   if (canListModels) {
-    modelHint.textContent = 'Loading model list…';
+    modelHint.textContent = t('settings.loadingModels');
     loadMainModels(false);
   } else {
     modelHint.textContent = provider.requiresBaseURL
-      ? 'Enter your server URL to load the model list.'
-      : 'Enter an API key to load the model list.';
+      ? t('settings.enterURLForModels')
+      : t('settings.enterKeyForModels');
   }
   root.append(
     el('div', { class: 'form-row' },
-      el('label', {}, 'Model'),
+      el('label', {}, t('settings.model')),
       el('div', { class: 'form-inline' }, modelInput, refreshBtn),
       datalist,
       modelHint
@@ -261,38 +266,42 @@ function renderAPI() {
 
   // Prepaid balance (OpenRouter exposes a credits endpoint)
   if (s.activeAPI === 'openrouter' && s.apiKeys.openrouter) {
-    const balance = el('span', { class: 'hint' }, 'Checking balance…');
+    const balance = el('span', { class: 'hint' }, t('settings.checkingBalance'));
     window.tavern.llm
       .credits(apiConfig())
       .then((c) => {
         if (!c) return;
-        balance.textContent = `$${c.remaining.toFixed(2)} remaining (used $${c.used.toFixed(2)} of $${c.total.toFixed(2)})`;
+        balance.textContent = t('settings.balance', {
+          remaining: c.remaining.toFixed(2),
+          used: c.used.toFixed(2),
+          total: c.total.toFixed(2),
+        });
         if (c.remaining < 1) balance.style.color = 'var(--danger)';
       })
       .catch((err) => {
-        balance.textContent = `Could not fetch balance: ${err.message}`;
+        balance.textContent = t('settings.balanceFailed', { msg: err.message });
       });
-    root.append(el('div', { class: 'form-row' }, el('label', {}, 'Account Balance'), balance));
+    root.append(el('div', { class: 'form-row' }, el('label', {}, t('settings.accountBalance')), balance));
   }
 
   root.append(renderImageGen(s));
 
   if (isAdvanced() && (s.activeAPI === 'openrouter' || s.activeAPI === 'gemini')) {
     root.append(
-      checkboxRow('Chat model may reply with images (advanced)', {
+      checkboxRow(t('settings.chatModelImages'), {
         get: () => !!s.requestImageOutput,
         set: (v) => {
           s.requestImageOutput = v;
           scheduleSettingsSave();
         },
-        hint: 'Adds image output modalities to every normal chat request. Most people want the 🎨 button (Image Generation above) instead.',
+        hint: t('settings.chatModelImagesHint'),
       })
     );
   }
 
   if (isAdvanced() && !provider.requiresBaseURL) {
     root.append(
-      textRow('Base URL Override', {
+      textRow(t('settings.baseURLOverride'), {
         get: () => s.baseURLs?.[s.activeAPI] ?? '',
         set: (v) => {
           s.baseURLs = s.baseURLs ?? {};
@@ -300,23 +309,23 @@ function renderAPI() {
           else delete s.baseURLs[s.activeAPI];
           scheduleSettingsSave();
         },
-        placeholder: 'Leave empty for the provider default',
-        hint: 'For proxies or OpenAI-compatible endpoints.',
+        placeholder: t('settings.baseURLPlaceholder'),
+        hint: t('settings.baseURLHint'),
       })
     );
   }
 
   // Connection test
-  const testBtn = el('button', { class: 'btn btn-primary' }, 'Test Connection');
+  const testBtn = el('button', { class: 'btn btn-primary' }, t('settings.testConnection'));
   const testResult = el('span', { class: 'hint', style: { marginLeft: '10px' } });
   testBtn.addEventListener('click', async () => {
     testBtn.disabled = true;
-    testResult.textContent = 'Testing…';
+    testResult.textContent = t('settings.testing');
     testResult.style.color = 'var(--text-dim)';
     try {
       await saveSettingsNow();
       const result = await window.tavern.llm.test(apiConfig());
-      testResult.textContent = `✓ Connected (${result.latencyMs}ms) — "${result.sample.trim()}"`;
+      testResult.textContent = t('settings.connected', { ms: result.latencyMs, sample: result.sample.trim() });
       testResult.style.color = 'var(--ok)';
       devLog('INFO', `Connection test OK in ${result.latencyMs}ms`);
     } catch (err) {
@@ -333,9 +342,9 @@ function renderAPI() {
 
 /** Image Generation group: a dedicated provider/model for the 🎨 button. */
 function renderImageGen(s) {
-  const group = el('div', {}, el('h3', {}, 'Image Generation'));
+  const group = el('div', {}, el('h3', {}, t('settings.imageGeneration')));
   group.append(
-    checkboxRow('Enable image generation (adds a 🎨 button to the chat input)', {
+    checkboxRow(t('settings.enableImageGen'), {
       get: () => !!s.imageGen?.enabled,
       set: (v) => {
         s.imageGen = s.imageGen ?? { provider: '', model: '' };
@@ -343,16 +352,16 @@ function renderImageGen(s) {
         scheduleSettingsSave();
         renderSettings();
       },
-      hint: 'The 🎨 button sends your prompt to the image model below instead of the chat model.',
+      hint: t('settings.enableImageGenHint'),
     })
   );
   if (!s.imageGen?.enabled) return group;
 
   const imageProvider = s.imageGen.provider || s.activeAPI;
   group.append(
-    selectRow('Image Provider', {
+    selectRow(t('settings.imageProvider'), {
       options: [
-        ['', `Same as chat (${PROVIDERS[s.activeAPI].label})`],
+        ['', t('settings.sameAsChat', { label: PROVIDERS[s.activeAPI].label })],
         ['openrouter', 'OpenRouter'],
         ['gemini', 'Google Gemini'],
       ],
@@ -363,7 +372,7 @@ function renderImageGen(s) {
         renderSettings();
       },
       hint: PROVIDERS[imageProvider].requiresKey && !s.apiKeys[imageProvider]
-        ? `No API key stored for ${PROVIDERS[imageProvider].label} — add one with that provider selected above.`
+        ? t('settings.noKeyForProvider', { label: PROVIDERS[imageProvider].label })
         : undefined,
     })
   );
@@ -375,7 +384,7 @@ function renderImageGen(s) {
     placeholder: 'e.g. google/gemini-3.1-flash-image',
   });
   const datalist = el('datalist', { id: 'image-model-list' });
-  const hint = el('div', { class: 'hint' }, 'Only models that can output images are listed.');
+  const hint = el('div', { class: 'hint' }, t('settings.imageModelHint'));
   // A typo here (e.g. "gemini-3.1-image" instead of "google/gemini-3.1-flash-image")
   // only surfaces as a provider error mid-chat — warn right where it can be fixed.
   let imageModelIds = null; // known image-capable IDs once the provider list loads
@@ -384,7 +393,7 @@ function renderImageGen(s) {
     const value = (s.imageGen.model ?? '').trim();
     hint.textContent =
       imageModelIds?.length && value && !imageModelIds.includes(value)
-        ? `⚠ “${value}” is not an image-capable ${PROVIDERS[imageProvider].label} model — pick one from the list (e.g. ${imageModelIds[0]}).`
+        ? t('settings.imageModelWarn', { value, label: PROVIDERS[imageProvider].label, example: imageModelIds[0] })
         : baseHint;
   };
   modelInput.addEventListener('input', () => {
@@ -403,13 +412,13 @@ function renderImageGen(s) {
         fillModelDatalist(datalist, imageModels.length ? imageModels : models);
         imageModelIds = imageModels.map((m) => m.id);
         baseHint = imageModels.length
-          ? `${imageModels.length} image-capable models — type to search.`
-          : 'Provider did not flag image-output models; full list shown.';
+          ? t('settings.imageModelsAvailable', { count: imageModels.length })
+          : t('settings.imageModelsUnflagged');
         refreshHint();
       })
       .catch(() => {});
   }
-  group.append(el('div', { class: 'form-row' }, el('label', {}, 'Image Model'), modelInput, datalist, hint));
+  group.append(el('div', { class: 'form-row' }, el('label', {}, t('settings.imageModel')), modelInput, datalist, hint));
   return group;
 }
 
@@ -418,13 +427,13 @@ function renderImageGen(s) {
 
 function renderGeneral() {
   const s = state.settings;
-  const root = el('section', {}, el('h2', {}, 'General'));
+  const root = el('section', {}, el('h2', {}, t('settings.general')));
 
   root.append(
-    selectRow('App Mode', {
+    selectRow(t('settings.appMode'), {
       options: [
-        ['chat', 'Chat — a clean, general-purpose AI assistant'],
-        ['roleplay', 'Story — role-play with characters, personas & world lore'],
+        ['chat', t('settings.appModeChat')],
+        ['roleplay', t('settings.appModeStory')],
       ],
       get: () => s.appMode ?? 'chat',
       set: (v) => {
@@ -433,51 +442,65 @@ function renderGeneral() {
         saveSettingsNow();
         cb.onModeChange?.();
       },
-      hint: 'Chat is a straightforward assistant. Story mode unlocks role-playing with character cards, personas, world lore books, and story tools.',
+      hint: t('settings.appModeHint'),
+    }),
+    selectRow(t('settings.language'), {
+      options: [
+        ['system', t('settings.languageSystem')],
+        ...Object.keys(LOCALES).map((code) => [code, LOCALE_LABELS[code]]),
+      ],
+      get: () => s.language ?? 'system',
+      set: (v) => {
+        s.language = v;
+        saveSettingsNow();
+        cb.applyLocale?.();
+        cb.renderSidebar?.();
+        renderSettings();
+      },
     })
   );
 
   root.append(
-    checkboxRow('Check for updates automatically', {
+    checkboxRow(t('settings.updateCheck'), {
       get: () => s.updateCheck !== false,
       set: (v) => {
         s.updateCheck = v;
         scheduleSettingsSave();
       },
-      hint: 'Checks GitHub Releases once a day for a newer version. Only the version number is fetched — nothing about you or your chats is sent.',
+      hint: t('settings.updateCheckHint'),
     })
   );
-  const updateBtn = el('button', { class: 'btn' }, 'Check Now');
+  const updateBtn = el('button', { class: 'btn' }, t('settings.checkNow'));
   const updateStatus = el('span', { class: 'hint', style: { marginLeft: '10px' } });
   window.tavern.misc.appVersion().then((v) => {
-    updateStatus.textContent = `Current version: ${v}`;
+    updateStatus.textContent = t('settings.currentVersion', { version: v });
   });
   updateBtn.addEventListener('click', async () => {
     updateBtn.disabled = true;
-    updateStatus.textContent = 'Checking…';
+    updateStatus.textContent = t('settings.checking');
     try {
       const update = await window.tavern.updates.check();
       if (update) {
-        updateStatus.textContent = `Version ${update.version} is available.`;
+        updateStatus.textContent = t('settings.versionAvailable', { version: update.version });
         cb.showUpdateBanner?.(update);
       } else {
-        updateStatus.textContent = 'You are on the latest version.';
+        updateStatus.textContent = t('settings.latestVersion');
       }
     } catch (err) {
-      updateStatus.textContent = `Check failed: ${err.message}`;
+      updateStatus.textContent = t('settings.checkFailed', { msg: err.message });
     }
     updateBtn.disabled = false;
   });
   root.append(
     el('div', { class: 'form-row' },
-      el('label', {}, 'Updates'),
+      el('label', {}, t('settings.updates')),
       el('div', { class: 'form-inline' }, updateBtn, updateStatus)
     )
   );
 
   if (isChatMode()) {
     root.append(
-      textareaRow('Assistant System Prompt', {
+      textareaRow(t('settings.assistantPrompt'), {
         get: () => s.chatSystemPrompt,
         set: (v) => {
           s.chatSystemPrompt = v;
@@ -485,31 +508,31 @@ function renderGeneral() {
         },
         rows: 3,
         placeholder: DEFAULT_CHAT_SYSTEM_PROMPT,
-        hint: 'How the assistant should behave. Leave empty for the default.',
+        hint: t('settings.assistantPromptHint'),
       })
     );
   }
 
   root.append(
-    selectRow('User Mode', {
+    selectRow(t('settings.userMode'), {
       options: [
-        ['regular', 'Regular — clean and simple'],
-        ['advanced', 'Advanced — full control over AI responses'],
+        ['regular', t('settings.userModeRegular')],
+        ['advanced', t('settings.userModeAdvanced')],
       ],
       get: () => s.uiMode,
       set: (v) => {
         s.uiMode = v;
         scheduleSettingsSave();
         renderSettings();
-        toast(v === 'advanced' ? 'Advanced mode: extra settings unlocked' : 'Regular mode', 'ok');
+        toast(v === 'advanced' ? t('settings.advancedUnlocked') : t('settings.regularMode'), 'ok');
       },
-      hint: 'Advanced mode unlocks sampler parameters, presets, prompt overrides, base URLs, and developer tools.',
+      hint: t('settings.userModeHint'),
     }),
-    selectRow('Theme', {
+    selectRow(t('settings.theme'), {
       options: [
-        ['system', 'Match system'],
-        ['dark', 'Dark'],
-        ['light', 'Light'],
+        ['system', t('settings.themeSystem')],
+        ['dark', t('settings.themeDark')],
+        ['light', t('settings.themeLight')],
       ],
       get: () => s.theme,
       set: (v) => {
@@ -518,7 +541,7 @@ function renderGeneral() {
         cb.applyAppearance?.();
       },
     }),
-    sliderRow('UI Scale', {
+    sliderRow(t('settings.uiScale'), {
       min: 0.8,
       max: 1.4,
       step: 0.05,
@@ -529,7 +552,7 @@ function renderGeneral() {
         cb.applyAppearance?.();
       },
     }),
-    sliderRow('App Font Size', {
+    sliderRow(t('settings.appFontSize'), {
       min: 11,
       max: 17,
       step: 1,
@@ -539,14 +562,14 @@ function renderGeneral() {
         scheduleSettingsSave();
         cb.applyAppearance?.();
       },
-      hint: 'Base text size for the whole app. Chat text has its own size in Chat Style.',
+      hint: t('settings.appFontSizeHint'),
     }),
-    selectRow('App Font', {
+    selectRow(t('settings.appFont'), {
       options: [
-        ['system', 'System (default)'],
-        ['serif', 'Serif'],
-        ['rounded', 'Rounded'],
-        ['mono', 'Monospace'],
+        ['system', t('settings.fontSystem')],
+        ['serif', t('settings.fontSerif')],
+        ['rounded', t('settings.fontRounded')],
+        ['mono', t('settings.fontMono')],
       ],
       get: () => s.appFontFamily ?? 'system',
       set: (v) => {
@@ -555,7 +578,7 @@ function renderGeneral() {
         cb.applyAppearance?.();
       },
     }),
-    checkboxRow('Send message on Enter (Shift+Enter for newline)', {
+    checkboxRow(t('settings.sendOnEnter'), {
       get: () => s.sendOnEnter,
       set: (v) => {
         s.sendOnEnter = v;
@@ -566,7 +589,7 @@ function renderGeneral() {
 
   if (isAdvanced()) {
     root.append(
-      checkboxRow('Developer mode (log API requests/responses)', {
+      checkboxRow(t('settings.developerMode'), {
         get: () => s.developerMode,
         set: (v) => {
           s.developerMode = v;
@@ -585,16 +608,17 @@ function renderGeneral() {
 function renderChatStyle() {
   const s = state.settings;
   const style = s.chatStyle;
-  const root = el('section', {}, el('h2', {}, 'Chat Text Styling'));
+  const root = el('section', {}, el('h2', {}, t('settings.chatStyling')));
 
   const preview = el('div', {
     class: 'card msg-content',
     style: { fontSize: 'var(--chat-font-size)', lineHeight: 1.55 },
   });
   const updatePreview = () => {
-    preview.innerHTML =
-      `<span class='md-quote'>"Dialogue text looks like this,"</span> she said. ` +
-      `<em class='md-action'>She gestured toward the window.</em> The narrative text fills in everything else.`;
+    clear(preview);
+    const quote = el('span', { class: 'md-quote' }, t('settings.previewDialogue'));
+    const action = el('em', { class: 'md-action' }, t('settings.previewAction'));
+    preview.append(quote, t('settings.previewSaid'), action, t('settings.previewNarrative'));
   };
   updatePreview();
 
@@ -611,11 +635,11 @@ function renderChatStyle() {
   };
 
   root.append(
-    el('p', { class: 'hint', style: { marginBottom: '14px' } }, 'Colors for the three kinds of chat text, matching SillyTavern conventions.'),
-    colorRow('Dialogue (quoted text)', 'quoteColor'),
-    colorRow('Actions (*italic text*)', 'actionColor'),
-    colorRow('Narrative (everything else)', 'narrativeColor'),
-    sliderRow('Chat Font Size', {
+    el('p', { class: 'hint', style: { marginBottom: '14px' } }, t('settings.chatStylingHint')),
+    colorRow(t('settings.dialogueColor'), 'quoteColor'),
+    colorRow(t('settings.actionColor'), 'actionColor'),
+    colorRow(t('settings.narrativeColor'), 'narrativeColor'),
+    sliderRow(t('settings.chatFontSize'), {
       min: 11,
       max: 20,
       step: 1,
@@ -626,7 +650,7 @@ function renderChatStyle() {
         cb.applyAppearance?.();
       },
     }),
-    el('h3', {}, 'Preview'),
+    el('h3', {}, t('settings.preview')),
     preview,
     el('button', {
       class: 'btn',
@@ -636,7 +660,7 @@ function renderChatStyle() {
         cb.applyAppearance?.();
         renderSettings();
       },
-    }, 'Reset to Defaults')
+    }, t('settings.resetDefaults'))
   );
   return root;
 }
@@ -651,11 +675,11 @@ function renderGeneration() {
     p[key] = v;
     scheduleSettingsSave();
   };
-  const root = el('section', {}, el('h2', {}, 'Generation'));
+  const root = el('section', {}, el('h2', {}, t('settings.sectionGeneration')));
 
   if (isAdvanced() && state.presets.length) {
     root.append(
-      selectRow('Active Preset', {
+      selectRow(t('settings.activePreset'), {
         options: state.presets.map((preset) => [preset.name, preset.name]),
         get: () => s.activePresetName ?? 'Default',
         set: (v) => {
@@ -667,56 +691,56 @@ function renderGeneration() {
             renderSettings();
           }
         },
-        hint: 'Loading a preset replaces the parameters below. Manage presets in the Presets section.',
+        hint: t('settings.activePresetHint'),
       })
     );
   }
 
   root.append(
-    sliderRow('Temperature', { min: 0, max: 2, step: 0.05, get: () => p.temperature, set: set('temperature'),
-      hint: 'Higher = more creative, lower = more focused.' }),
-    sliderRow('Max Response Tokens', { min: 64, max: 32768, step: 64, get: () => p.max_tokens, set: set('max_tokens'),
-      hint: 'Upper bound on response length. Modern Claude/GPT models accept 32k+; older or smaller models may reject values above their own limit.' }),
-    checkboxRow('Stream responses (show text as it generates)', { get: () => p.stream_response, set: set('stream_response') }),
-    checkboxRow('Estimate message costs', {
+    sliderRow(t('settings.temperature'), { min: 0, max: 2, step: 0.05, get: () => p.temperature, set: set('temperature'),
+      hint: t('settings.temperatureHint') }),
+    sliderRow(t('settings.maxTokens'), { min: 64, max: 32768, step: 64, get: () => p.max_tokens, set: set('max_tokens'),
+      hint: t('settings.maxTokensHint') }),
+    checkboxRow(t('settings.streamResponses'), { get: () => p.stream_response, set: set('stream_response') }),
+    checkboxRow(t('settings.costEstimates'), {
       get: () => s.showCostEstimates ?? true,
       set: (v) => {
         s.showCostEstimates = v;
         scheduleSettingsSave();
       },
-      hint: 'Tracks estimated tokens per reply and shows a running dollar total in the chat header. OpenRouter prices load live; OpenAI, Anthropic, Gemini, DeepSeek, Kimi, and Qwen use bundled reference prices (Ollama counts as free). Estimates are heuristic, not billing data.',
+      hint: t('settings.costEstimatesHint'),
     })
   );
 
   // Chat compression — keeps long conversations from resending everything
   const comp = s.chatCompression;
   root.append(
-    el('h3', {}, 'Chat Compression'),
-    checkboxRow('Compress long chats (summarize older messages to cut cost)', {
+    el('h3', {}, t('settings.chatCompression')),
+    checkboxRow(t('settings.compressChats'), {
       get: () => !!comp.enabled,
       set: (v) => {
         comp.enabled = v;
         scheduleSettingsSave();
         renderSettings();
       },
-      hint: 'Older messages are folded into a running summary so each new reply stops resending the whole history to the API.',
+      hint: t('settings.compressChatsHint'),
     })
   );
   if (comp.enabled) {
     root.append(
-      sliderRow('Compress after (messages)', {
+      sliderRow(t('settings.compressAfter'), {
         min: 20, max: 200, step: 10,
         get: () => comp.afterMessages ?? 60,
         set: (v) => {
           comp.afterMessages = v;
           scheduleSettingsSave();
         },
-        hint: 'When a chat grows past this, older messages are summarized in the background with your current model. The newest 16 messages are always sent in full.',
+        hint: t('settings.compressAfterHint'),
       })
     );
     if (isAdvanced()) {
       root.append(
-        textareaRow('Compression Prompt Override', {
+        textareaRow(t('settings.compressionPrompt'), {
           get: () => comp.prompt ?? '',
           set: (v) => {
             comp.prompt = v;
@@ -724,31 +748,32 @@ function renderGeneration() {
           },
           rows: 3,
           placeholder: DEFAULT_COMPRESSION_PROMPT,
-          hint: 'Instructions given to the model when summarizing. Leave empty for the default.',
+          hint: t('settings.compressionPromptHint'),
         })
       );
     }
   }
 
   if (!isAdvanced()) {
-    root.append(el('p', { class: 'hint' }, 'Switch to Advanced mode in General settings for full sampler control (top-p, top-k, penalties, min-p, seeds, stop sequences, and more).'));
+    root.append(el('p', { class: 'hint' }, t('settings.advancedTeaser')));
     return root;
   }
 
   root.append(
-    el('h3', {}, 'Sampling'),
-    sliderRow('Top P (nucleus sampling)', { min: 0, max: 1, step: 0.01, get: () => p.top_p, set: set('top_p') }),
-    sliderRow('Top K (0 = disabled)', { min: 0, max: 200, step: 1, get: () => p.top_k, set: set('top_k') }),
-    sliderRow('Min P (0 = disabled)', { min: 0, max: 1, step: 0.01, get: () => p.min_p, set: set('min_p') }),
-    sliderRow('Top A (0 = disabled)', { min: 0, max: 1, step: 0.01, get: () => p.top_a, set: set('top_a') }),
-    sliderRow('Typical P (1 = disabled)', { min: 0, max: 1, step: 0.01, get: () => p.typical_p, set: set('typical_p') }),
-    el('h3', {}, 'Repetition Control'),
-    sliderRow('Frequency Penalty', { min: -2, max: 2, step: 0.05, get: () => p.frequency_penalty, set: set('frequency_penalty') }),
-    sliderRow('Presence Penalty', { min: -2, max: 2, step: 0.05, get: () => p.presence_penalty, set: set('presence_penalty') }),
-    sliderRow('Repetition Penalty (1 = disabled)', { min: 0.5, max: 2, step: 0.01, get: () => p.repetition_penalty, set: set('repetition_penalty'),
-      hint: 'Passed through to OpenRouter/Ollama models that support it.' }),
-    el('h3', {}, 'Context'),
-    checkboxRow('Auto context size — match the selected model', {
+    el('h3', {}, t('settings.sampling')),
+    sliderRow(t('settings.topP'), { min: 0, max: 1, step: 0.01, get: () => p.top_p, set: set('top_p') }),
+    sliderRow(t('settings.topK'), { min: 0, max: 200, step: 1, get: () => p.top_k, set: set('top_k') }),
+    sliderRow(t('settings.minP'), { min: 0, max: 1, step: 0.01, get: () => p.min_p, set: set('min_p') }),
+    sliderRow(t('settings.topA'), { min: 0, max: 1, step: 0.01, get: () => p.top_a, set: set('top_a') }),
+    sliderRow(t('settings.typicalP'), { min: 0, max: 1, step: 0.01, get: () => p.typical_p, set: set('typical_p'),
+      hint: t('settings.typicalPHint') }),
+    el('h3', {}, t('settings.repetitionControl')),
+    sliderRow(t('settings.freqPenalty'), { min: -2, max: 2, step: 0.05, get: () => p.frequency_penalty, set: set('frequency_penalty') }),
+    sliderRow(t('settings.presPenalty'), { min: -2, max: 2, step: 0.05, get: () => p.presence_penalty, set: set('presence_penalty') }),
+    sliderRow(t('settings.repPenalty'), { min: 0.5, max: 2, step: 0.01, get: () => p.repetition_penalty, set: set('repetition_penalty'),
+      hint: t('settings.repPenaltyHint') }),
+    el('h3', {}, t('settings.context')),
+    checkboxRow(t('settings.autoContext'), {
       get: () => p.context_size_auto ?? true,
       set: (v) => {
         p.context_size_auto = v;
@@ -757,21 +782,19 @@ function renderGeneration() {
       },
       hint: contextAutoHint(),
     }),
-    sliderRow('Context Size (tokens of history to keep)', {
+    sliderRow(t('settings.contextSize'), {
       min: 0, max: 1048576, step: 1024, softMax: true,
       get: () => p.context_size, set: set('context_size'),
-      hint: (p.context_size_auto ?? true)
-        ? 'Fallback when the provider doesn\'t report the model\'s context window. 0 = unlimited. Type any value — the box accepts more than the slider.'
-        : '0 = unlimited (send the full history). Type any value — the box accepts more than the slider.',
+      hint: (p.context_size_auto ?? true) ? t('settings.contextSizeHintAuto') : t('settings.contextSizeHint'),
     }),
-    textRow('Stop Sequences (comma-separated)', {
+    textRow(t('settings.stopSequences'), {
       get: () => (p.stop_sequences ?? []).join(', '),
       set: (v) => {
         p.stop_sequences = v.split(',').map((x) => x.trim()).filter(Boolean);
         scheduleSettingsSave();
       },
     }),
-    textRow('Seed (-1 = random)', {
+    textRow(t('settings.seed'), {
       get: () => String(p.seed ?? -1),
       set: (v) => {
         const n = parseInt(v, 10);
@@ -785,12 +808,12 @@ function renderGeneration() {
 
 /** Live hint for the auto-context toggle: what auto resolves to right now. */
 function contextAutoHint() {
-  const base = 'Uses the model\'s advertised max context when the provider reports one.';
+  const base = t('settings.autoContextBase');
   const config = apiConfig();
   const known = knownModelContext(config.provider, config.model);
-  if (known > 0) return `${base} ${config.model}: ${known.toLocaleString()} tokens.`;
-  if (known === 0) return `${base} ${config.model} doesn't report one — the manual value below applies.`;
-  return `${base} Resolved on first use of the model.`;
+  if (known > 0) return t('settings.autoContextKnown', { base, model: config.model, tokens: known.toLocaleString() });
+  if (known === 0) return t('settings.autoContextUnreported', { base, model: config.model });
+  return t('settings.autoContextUnresolved', { base });
 }
 
 // ---------------------------------------------------------------------------
@@ -798,11 +821,10 @@ function contextAutoHint() {
 
 function renderPresets() {
   const s = state.settings;
-  const root = el('section', {}, el('h2', {}, 'Generation Presets'));
-  root.append(el('p', { class: 'hint', style: { marginBottom: '14px' } },
-    'Save the current generation parameters under a name, or import SillyTavern preset files.'));
+  const root = el('section', {}, el('h2', {}, t('settings.generationPresets')));
+  root.append(el('p', { class: 'hint', style: { marginBottom: '14px' } }, t('settings.presetsHint')));
 
-  const nameInput = el('input', { type: 'text', placeholder: 'Preset name', style: { maxWidth: '240px' } });
+  const nameInput = el('input', { type: 'text', placeholder: t('settings.presetName'), style: { maxWidth: '240px' } });
   root.append(
     el('div', { class: 'form-inline', style: { marginBottom: '16px' } },
       nameInput,
@@ -810,34 +832,34 @@ function renderPresets() {
         class: 'btn btn-primary',
         onclick: async () => {
           const name = nameInput.value.trim();
-          if (!name) return toast('Enter a preset name', 'error');
+          if (!name) return toast(t('settings.enterPresetName'), 'error');
           try {
             await window.tavern.presets.save({ name, generationParams: { ...s.generationParams } });
             s.activePresetName = name;
             scheduleSettingsSave();
             await cb.reloadPresets?.();
             renderSettings();
-            toast(`Preset "${name}" saved`, 'ok');
+            toast(t('settings.presetSaved', { name }), 'ok');
           } catch (err) {
             toast(err.message, 'error');
           }
         },
-      }, 'Save Current as Preset'),
+      }, t('settings.savePreset')),
       el('button', {
         class: 'btn',
         onclick: async () => {
-          const files = await window.tavern.dialog.openFile({ filters: [{ name: 'Preset JSON', extensions: ['json'] }] });
+          const files = await window.tavern.dialog.openFile({ filters: [{ name: t('settings.filterPresetJSON'), extensions: ['json'] }] });
           if (!files[0]) return;
           try {
             const preset = await window.tavern.presets.import(files[0]);
             await cb.reloadPresets?.();
             renderSettings();
-            toast(`Imported "${preset.name}"`, 'ok');
+            toast(t('settings.presetImported', { name: preset.name }), 'ok');
           } catch (err) {
             toast(err.message, 'error');
           }
         },
-      }, 'Import…')
+      }, t('common.import'))
     )
   );
 
@@ -846,9 +868,13 @@ function renderPresets() {
     root.append(
       el('div', { class: 'list-row' },
         el('div', { class: 'list-main' },
-          el('div', { class: 'list-title' }, preset.name, isActive ? el('span', { class: 'mode-badge', style: { marginLeft: '8px' } }, 'Active') : null),
+          el('div', { class: 'list-title' }, preset.name, isActive ? el('span', { class: 'mode-badge', style: { marginLeft: '8px' } }, t('personas.active')) : null),
           el('div', { class: 'list-sub' },
-            `temp ${preset.generationParams.temperature} · top_p ${preset.generationParams.top_p} · ${preset.generationParams.max_tokens} tokens`)
+            t('settings.presetSub', {
+              temp: preset.generationParams.temperature,
+              topP: preset.generationParams.top_p,
+              tokens: preset.generationParams.max_tokens,
+            }))
         ),
         el('button', {
           class: 'btn btn-small',
@@ -857,27 +883,27 @@ function renderPresets() {
             s.generationParams = { ...preset.generationParams };
             scheduleSettingsSave();
             renderSettings();
-            toast(`Loaded "${preset.name}"`, 'ok');
+            toast(t('settings.presetLoaded', { name: preset.name }), 'ok');
           },
-        }, 'Load'),
+        }, t('settings.load')),
         el('button', {
           class: 'btn-icon',
-          title: 'Export',
+          title: t('common.export'),
           onclick: async () => {
             try {
               const saved = await window.tavern.presets.export(preset.name);
-              if (saved) toast('Preset exported', 'ok');
+              if (saved) toast(t('settings.presetExported'), 'ok');
             } catch (err) {
-              toast(`Export failed: ${err.message}`, 'error');
+              toast(t('common.exportFailed', { msg: err.message }), 'error');
             }
           },
         }, '⬆'),
         preset.name !== 'Default'
           ? el('button', {
               class: 'btn-icon',
-              title: 'Delete',
+              title: t('common.delete'),
               onclick: async () => {
-                const ok = await confirmDialog(`Delete preset "${preset.name}"?`);
+                const ok = await confirmDialog(t('settings.deletePresetConfirm', { name: preset.name }));
                 if (!ok) return;
                 await window.tavern.presets.delete(preset.name);
                 await cb.reloadPresets?.();
@@ -896,27 +922,27 @@ function renderPresets() {
 
 function renderPrompts() {
   const s = state.settings;
-  const root = el('section', {}, el('h2', {}, 'Prompt Customization'));
+  const root = el('section', {}, el('h2', {}, t('settings.promptCustomization')));
   root.append(
-    textareaRow('System Prompt Override', {
+    textareaRow(t('settings.systemPromptOverride'), {
       get: () => s.systemPromptOverride,
       set: (v) => {
         s.systemPromptOverride = v;
         scheduleSettingsSave();
       },
       rows: 4,
-      placeholder: 'Overrides every character\'s system prompt. Supports {{char}} and {{user}}.',
-      hint: `Leave empty to use each character's own system prompt. ~${estimateTokens(s.systemPromptOverride)} tokens.`,
+      placeholder: t('settings.systemPromptPlaceholder'),
+      hint: t('settings.systemPromptHint', { tokens: estimateTokens(s.systemPromptOverride) }),
     }),
-    textareaRow('Reminder Prompt', {
+    textareaRow(t('settings.reminderPrompt'), {
       get: () => s.reminderPrompt,
       set: (v) => {
         s.reminderPrompt = v;
         scheduleSettingsSave();
       },
       rows: 3,
-      placeholder: 'e.g. "Stay in character. Write in present tense. Keep responses under 3 paragraphs."',
-      hint: 'Injected near the end of the conversation to reinforce style and formatting that models forget in long chats.',
+      placeholder: t('settings.reminderPlaceholder'),
+      hint: t('settings.reminderHint'),
     })
   );
   return root;
@@ -926,17 +952,16 @@ function renderPrompts() {
 // Data
 
 function renderData() {
-  const root = el('section', {}, el('h2', {}, 'Data'));
-  const dirHint = el('p', { class: 'hint', style: { marginBottom: '16px' } }, 'Loading data location…');
+  const root = el('section', {}, el('h2', {}, t('settings.data')));
+  const dirHint = el('p', { class: 'hint', style: { marginBottom: '16px' } }, t('settings.loadingDataDir'));
   window.tavern.misc.dataDir().then((dir) => {
-    dirHint.textContent = `All data is stored locally in ${dir} — nothing is sent anywhere except your chosen AI provider (plus an optional daily version check against GitHub Releases).`;
+    dirHint.textContent = t('settings.dataDirInfo', { dir });
   });
 
   root.append(
     dirHint,
-    el('h3', {}, 'Import Data Folder'),
-    el('p', { class: 'hint', style: { marginBottom: '10px' } },
-      'Select an existing OpenChat data folder to copy its characters, chats, world books, presets, and personas. The folder must use the same layout (characters/, chats/, worlds/, presets/, user/).'),
+    el('h3', {}, t('settings.importDataFolder')),
+    el('p', { class: 'hint', style: { marginBottom: '10px' } }, t('settings.importDataHint')),
     el('button', {
       class: 'btn',
       onclick: async () => {
@@ -944,21 +969,25 @@ function renderData() {
         if (!dir) return;
         try {
           const copied = await window.tavern.misc.importDataFolder(dir);
-          toast(`Imported ${copied.characters} characters, ${copied.chats} chats, ${copied.worlds} world books, ${copied.presets} presets`, 'ok');
+          toast(t('settings.dataImported', {
+            characters: copied.characters,
+            chats: copied.chats,
+            worlds: copied.worlds,
+            presets: copied.presets,
+          }), 'ok');
           await cb.reloadAll?.();
           renderSettings();
         } catch (err) {
           toast(err.message, 'error');
         }
       },
-    }, 'Choose Folder…')
+    }, t('settings.chooseFolder'))
   );
 
   const stPreview = el('div');
   root.append(
-    el('h3', { style: { marginTop: '22px' } }, 'Import from SillyTavern'),
-    el('p', { class: 'hint', style: { marginBottom: '10px' } },
-      'Select your SillyTavern folder (the install folder, its data folder, or a user folder inside data) to bring over characters, chats, lorebooks, personas, and generation presets. Groups, themes, and quick replies are not supported. Nothing is overwritten — imported duplicates are renamed.'),
+    el('h3', { style: { marginTop: '22px' } }, t('settings.importST')),
+    el('p', { class: 'hint', style: { marginBottom: '10px' } }, t('settings.importSTHint')),
     el('button', {
       class: 'btn',
       onclick: async () => {
@@ -967,24 +996,24 @@ function renderData() {
         try {
           const scan = await window.tavern.sillytavern.scan(dir);
           const total = Object.values(scan.counts).reduce((a, b) => a + b, 0);
-          if (!total) return toast('Found a SillyTavern layout but nothing to import.', 'error');
+          if (!total) return toast(t('settings.stNothingToImport'), 'error');
           renderSTPreview(stPreview, scan);
         } catch (err) {
           toast(err.message, 'error');
         }
       },
-    }, 'Choose SillyTavern Folder…'),
+    }, t('settings.chooseSTFolder')),
     stPreview
   );
   return root;
 }
 
-const ST_CATEGORIES = [
-  ['characters', 'Characters'],
-  ['chats', 'Chats'],
-  ['lorebooks', 'Lorebooks (world info)'],
-  ['personas', 'Personas'],
-  ['presets', 'Generation presets'],
+const ST_CATEGORIES = () => [
+  ['characters', t('settings.stCharacters')],
+  ['chats', t('settings.stChats')],
+  ['lorebooks', t('settings.stLorebooks')],
+  ['personas', t('settings.stPersonas')],
+  ['presets', t('settings.stPresets')],
 ];
 
 /** Two-phase SillyTavern import: scan result → category checkboxes → import. */
@@ -992,7 +1021,7 @@ function renderSTPreview(host, scan) {
   clear(host);
   const selected = {};
   const rows = [];
-  for (const [key, label] of ST_CATEGORIES) {
+  for (const [key, label] of ST_CATEGORIES()) {
     if (!scan.counts[key]) continue; // omit empty categories
     selected[key] = true;
     rows.push(checkboxRow(`${label} (${scan.counts[key]})`, {
@@ -1003,37 +1032,34 @@ function renderSTPreview(host, scan) {
   const importBtn = el('button', {
     class: 'btn btn-primary',
     onclick: async () => {
-      if (!Object.values(selected).some(Boolean)) return toast('Nothing selected', 'error');
+      if (!Object.values(selected).some(Boolean)) return toast(t('settings.nothingSelected'), 'error');
       importBtn.disabled = true;
-      importBtn.textContent = 'Importing…';
+      importBtn.textContent = t('settings.importing');
       try {
         // Fast local file copying — a button state is proportionate progress UI
         const res = await window.tavern.sillytavern.import(scan.dir, selected);
-        const parts = ST_CATEGORIES
+        // "Label: count" pairs are plural-agnostic, so they translate cleanly
+        const parts = ST_CATEGORIES()
           .filter(([key]) => selected[key])
-          .map(([key, label]) => {
-            const n = res.imported[key];
-            const word = label.toLowerCase().replace(/ \(.*/, '');
-            return `${n} ${n === 1 ? word.replace(/s$/, '') : word}`;
-          });
-        const failures = res.errors.length ? ` — ${res.errors.length} items failed` : '';
+          .map(([key, label]) => `${label}: ${res.imported[key]}`);
+        const failures = res.errors.length ? t('settings.stImportFailures', { count: res.errors.length }) : '';
         clear(host);
-        toast(`Imported ${parts.join(', ')}${failures}`, res.errors.length ? 'error' : 'ok');
+        toast(t('settings.stImported', { parts: parts.join(', ') }) + failures, res.errors.length ? 'error' : 'ok');
         await cb.reloadAll?.();
         renderSettings();
       } catch (err) {
         toast(err.message, 'error');
         importBtn.disabled = false;
-        importBtn.textContent = 'Import Selected';
+        importBtn.textContent = t('settings.importSelected');
       }
     },
-  }, 'Import Selected');
+  }, t('settings.importSelected'));
   host.append(
     el('div', { style: { margin: '12px 0 0', padding: '12px', border: '1px solid var(--border)', borderRadius: '8px', maxWidth: '420px' } },
       ...rows,
       el('div', { class: 'form-inline', style: { marginTop: '10px' } },
         importBtn,
-        el('button', { class: 'btn', onclick: () => clear(host) }, 'Cancel')
+        el('button', { class: 'btn', onclick: () => clear(host) }, t('common.cancel'))
       )
     )
   );
@@ -1045,11 +1071,11 @@ function renderSTPreview(host, scan) {
 let devlogCleanup = null;
 
 function renderDeveloper() {
-  const root = el('section', {}, el('h2', {}, 'Developer Log'));
+  const root = el('section', {}, el('h2', {}, t('settings.developerLog')));
   const log = el('div', { class: 'devlog' });
   const renderLog = () => {
     clear(log);
-    if (!state.devLog.length) log.append(el('div', { class: 'log-INFO' }, 'No entries yet. API requests will appear here.'));
+    if (!state.devLog.length) log.append(el('div', { class: 'log-INFO' }, t('settings.noLogEntries')));
     for (const entry of state.devLog.slice(-200)) {
       log.append(el('div', { class: `log-${entry.type}` }, `[${entry.time.slice(11, 19)}] ${entry.type} ${entry.message}`));
     }
@@ -1068,7 +1094,7 @@ function renderDeveloper() {
           state.devLog = [];
           renderLog();
         },
-      }, 'Clear Log')
+      }, t('settings.clearLog'))
     )
   );
   return root;

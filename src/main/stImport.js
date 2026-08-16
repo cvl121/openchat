@@ -25,6 +25,7 @@ import {
   savePreset,
   mapSTPreset,
 } from './storage.js';
+import { t } from '../shared/i18n.js';
 
 const PRESET_DIRS = ['OpenAI Settings', 'TextGen Settings', 'KoboldAI Settings', 'NovelAI Settings'];
 
@@ -115,9 +116,7 @@ function readSTPersonas(dir) {
 export function scanSTFolder(pickedDir) {
   const dir = detectSTDataDir(pickedDir);
   if (!dir) {
-    throw new Error(
-      'No SillyTavern data found. Pick the SillyTavern folder, its data folder, or a user folder inside data (containing characters/, chats/, worlds/).'
-    );
+    throw new Error(t('errors.noSTData'));
   }
   const chatsRoot = path.join(dir, 'chats');
   return {

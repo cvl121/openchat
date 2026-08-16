@@ -1,8 +1,9 @@
 // Character library page: grid of all characters with import/create actions.
 
 import { el, clear, toast } from '../util.js';
-import { state, avatarURL } from '../state.js';
+import { state, avatarURL, filterCharacters } from '../state.js';
 import { avatar } from '../components.js';
+import { t } from '../../../shared/i18n.js';
 
 let cb = {}; // { selectCharacter, editCharacter, reloadCharacters }
 
@@ -17,7 +18,7 @@ export function renderCharacters() {
 
   const search = el('input', {
     type: 'text',
-    placeholder: 'Filter by name or tag…',
+    placeholder: t('characters.filterPlaceholder'),
     style: { maxWidth: '260px' },
   });
   search.addEventListener('input', () => renderGrid(grid, search.value));
@@ -26,13 +27,13 @@ export function renderCharacters() {
     el(
       'div',
       { class: 'page-header' },
-      el('h1', {}, 'Characters'),
+      el('h1', {}, t('characters.title')),
       el(
         'div',
         { style: { display: 'flex', gap: '8px' } },
         search,
-        el('button', { class: 'btn', onclick: importCharacter }, 'Import…'),
-        el('button', { class: 'btn btn-primary', onclick: () => cb.editCharacter?.(null) }, '+ New')
+        el('button', { class: 'btn', onclick: importCharacter }, t('common.import')),
+        el('button', { class: 'btn btn-primary', onclick: () => cb.editCharacter?.(null) }, t('characters.new'))
       )
     )
   );
@@ -45,17 +46,9 @@ export function renderCharacters() {
 
 function renderGrid(grid, query) {
   clear(grid);
-  const q = query.trim().toLowerCase();
-  let chars = state.characters;
-  if (q) {
-    chars = chars.filter(
-      (c) =>
-        c.card.data.name.toLowerCase().includes(q) ||
-        (c.card.data.tags ?? []).some((t) => t.toLowerCase().includes(q))
-    );
-  }
+  const chars = filterCharacters(state.characters, query);
   if (!chars.length) {
-    grid.append(el('p', { style: { color: 'var(--text-dim)' } }, 'No characters found.'));
+    grid.append(el('p', { style: { color: 'var(--text-dim)' } }, t('characters.noneFound')));
     return;
   }
   for (const character of chars) {
@@ -73,31 +66,31 @@ function renderGrid(grid, query) {
           'button',
           {
             class: 'btn btn-small',
-            'aria-label': `Edit ${data.name}`,
+            'aria-label': t('characters.editAria', { name: data.name }),
             onclick: (e) => {
               e.stopPropagation();
               cb.editCharacter?.(character);
             },
           },
-          'Edit'
+          t('characters.edit')
         ),
         el(
           'button',
           {
             class: 'btn btn-small',
-            title: 'Export as PNG card',
-            'aria-label': `Export ${data.name} as PNG card`,
+            title: t('characters.exportPNGTitle'),
+            'aria-label': t('characters.exportAria', { name: data.name }),
             onclick: async (e) => {
               e.stopPropagation();
               try {
                 const saved = await window.tavern.characters.export(character.filename, 'png');
-                if (saved) toast('Character exported', 'ok');
+                if (saved) toast(t('sidebar.characterExported'), 'ok');
               } catch (err) {
                 toast(err.message, 'error');
               }
             },
           },
-          'Export'
+          t('common.export')
         )
       )
     );
@@ -108,7 +101,7 @@ function renderGrid(grid, query) {
 async function importCharacter() {
   const files = await window.tavern.dialog.openFile({
     multi: true,
-    filters: [{ name: 'Character Cards', extensions: ['png', 'json'] }],
+    filters: [{ name: t('characters.filterCards'), extensions: ['png', 'json'] }],
   });
   let imported = 0;
   for (const file of files) {
@@ -116,11 +109,11 @@ async function importCharacter() {
       await window.tavern.characters.import(file);
       imported++;
     } catch (err) {
-      toast(`Import failed: ${err.message}`, 'error');
+      toast(t('common.importFailed', { msg: err.message }), 'error');
     }
   }
   if (imported) {
-    toast(`Imported ${imported} character${imported > 1 ? 's' : ''}`, 'ok');
+    toast(t('characters.importedCount', { count: imported }), 'ok');
     await cb.reloadCharacters?.();
     renderCharacters();
   }

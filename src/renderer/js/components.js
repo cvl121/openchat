@@ -73,8 +73,8 @@ export function checkboxRow(label, { get, set, hint }) {
   );
 }
 
-export function textRow(label, { get, set, placeholder = '', password = false, hint }) {
-  const input = el('input', { type: password ? 'password' : 'text', value: get() ?? '', placeholder });
+export function textRow(label, { get, set, placeholder = '', hint }) {
+  const input = el('input', { type: 'text', value: get() ?? '', placeholder });
   input.addEventListener('input', () => set(input.value));
   return el(
     'div',

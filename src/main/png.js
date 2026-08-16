@@ -1,4 +1,5 @@
 // PNG tEXt chunk I/O for TavernCardV2 character cards.
+import { t } from '../shared/i18n.js';
 // Cards are stored as base64-encoded JSON in a tEXt chunk keyed "chara" (or "ccv3").
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -29,7 +30,7 @@ export function isPNG(buf) {
 
 /** Iterate PNG chunks as { type, data, offset, length } (length = full chunk size on disk). */
 export function readChunks(buf) {
-  if (!isPNG(buf)) throw new Error('Not a valid PNG file');
+  if (!isPNG(buf)) throw new Error(t('errors.notPNG'));
   const chunks = [];
   let pos = 8;
   while (pos + 12 <= buf.length) {
@@ -99,7 +100,7 @@ export function normalizeCard(json) {
   } else if (json && json.name) {
     data = json;
   } else {
-    throw new Error('Unrecognized character card format');
+    throw new Error(t('errors.unrecognizedCard'));
   }
   return {
     spec: 'chara_card_v2',
@@ -131,7 +132,7 @@ export function normalizeCard(json) {
 /** Parse a TavernCardV2 from a character PNG. Tries "chara" then "ccv3" keywords. */
 export function parseCharacterCard(buf) {
   const text = readTextChunk(buf, 'chara') ?? readTextChunk(buf, 'ccv3');
-  if (!text) throw new Error('No character data found in PNG');
+  if (!text) throw new Error(t('errors.noCardInPNG'));
   const json = JSON.parse(Buffer.from(text, 'base64').toString('utf8'));
   return normalizeCard(json);
 }

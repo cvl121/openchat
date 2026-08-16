@@ -2,18 +2,10 @@
 // with a 500ms debounce.
 
 import { debounce } from './util.js';
+import { PROVIDERS } from '../../shared/providers.js';
+import { foldText } from '../../shared/text.js';
 
-export const PROVIDERS = {
-  openrouter: { label: 'OpenRouter', requiresKey: true, defaultModel: 'google/gemini-3.1-pro-preview', keyURL: 'https://openrouter.ai/keys' },
-  openai: { label: 'OpenAI', requiresKey: true, defaultModel: 'gpt-4o-mini', keyURL: 'https://platform.openai.com/api-keys' },
-  claude: { label: 'Anthropic Claude', requiresKey: true, defaultModel: 'claude-sonnet-4-6', keyURL: 'https://console.anthropic.com/' },
-  gemini: { label: 'Google Gemini', requiresKey: true, defaultModel: 'gemini-3.1-pro-preview', keyURL: 'https://aistudio.google.com/apikey' },
-  deepseek: { label: 'DeepSeek', requiresKey: true, defaultModel: 'deepseek-chat', keyURL: 'https://platform.deepseek.com/api_keys' },
-  kimi: { label: 'Kimi (Moonshot AI)', requiresKey: true, defaultModel: 'kimi-latest', keyURL: 'https://platform.moonshot.ai/console/api-keys' },
-  qwen: { label: 'Qwen (Alibaba)', requiresKey: true, defaultModel: 'qwen-plus', keyURL: 'https://modelstudio.console.alibabacloud.com/#/api-key' },
-  ollama: { label: 'Ollama (local)', requiresKey: false, defaultModel: 'llama3.1', keyURL: 'https://ollama.ai' },
-  custom: { label: 'Custom (OpenAI-compatible)', requiresKey: false, requiresBaseURL: true, defaultModel: '', keyURL: null },
-};
+export { PROVIDERS };
 
 // Chat mode talks to a built-in virtual assistant instead of a character
 // card. Conversations are stored like any character's chats, keyed by name.
@@ -173,6 +165,18 @@ export function clearUnread(charName, file) {
 
 export function isUnread(charName, file) {
   return !!state.settings?.unreadConversations?.[convKey(charName, file)];
+}
+
+/** Name/tag filter shared by the sidebar and the character library grid.
+ *  Case- and accent-insensitive ("jose" matches "José"). */
+export function filterCharacters(chars, query) {
+  const q = foldText(query.trim());
+  if (!q) return chars;
+  return chars.filter(
+    (c) =>
+      foldText(c.card.data.name).includes(q) ||
+      (c.card.data.tags ?? []).some((tag) => foldText(tag).includes(q))
+  );
 }
 
 export function isAdvanced() {

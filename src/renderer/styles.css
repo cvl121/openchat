@@ -817,3 +817,31 @@ input[type='checkbox'] {
 .tok-string { color: var(--tok-string); }
 .tok-number { color: var(--tok-number); }
 .tok-keyword { color: var(--tok-keyword); }
+
+/* Right-click context menu (sidebar rows) */
+.ctx-menu {
+  position: fixed;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  z-index: 150;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+  min-width: 160px;
+}
+.ctx-menu-item {
+  padding: 7px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 12.5px;
+}
+.ctx-menu-item:hover { background: var(--bg-hover); }
+.ctx-menu-item.danger { color: var(--danger); }
+
+/* CJK line breaking: strict rules keep small kana / punctuation off line
+   starts; long CJK runs break per character instead of overflowing. */
+html[lang^='zh'] .msg-content,
+html[lang^='ja'] .msg-content {
+  line-break: strict;
+}
