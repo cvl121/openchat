@@ -9,6 +9,35 @@ import { compareVersions } from './version.js';
 
 export const WHATS_NEW = [
   {
+    version: '0.9.1',
+    items: {
+      en: [
+        'After each update, this What’s New dialog now summarizes the changes.',
+        'Editing a character no longer drops hidden card data (SillyTavern extensions, V3 extras) when saving.',
+        'OpenAI reasoning models (o-series, GPT-5) now work through the Custom provider when pointed at api.openai.com.',
+        'Windows: the installer now has a proper app icon.',
+      ],
+      es: [
+        'Después de cada actualización, este diálogo de novedades resume los cambios.',
+        'Editar un personaje ya no elimina datos ocultos de la tarjeta (extensiones de SillyTavern, extras V3) al guardar.',
+        'Los modelos de razonamiento de OpenAI (serie o, GPT-5) ahora funcionan con el proveedor personalizado apuntando a api.openai.com.',
+        'Windows: el instalador ahora tiene un icono adecuado.',
+      ],
+      'zh-CN': [
+        '每次更新后，这个“新功能”对话框会总结变更内容。',
+        '编辑角色时不再丢失卡片中的隐藏数据（SillyTavern 扩展、V3 附加字段）。',
+        'OpenAI 推理模型（o 系列、GPT-5）现在可通过指向 api.openai.com 的自定义服务商使用。',
+        'Windows：安装程序现在有了正确的应用图标。',
+      ],
+      ja: [
+        'アップデート後に、この「新機能」ダイアログが変更点をまとめて表示します。',
+        'キャラクター編集時に、カードの非表示データ（SillyTavern 拡張、V3 の追加フィールド）が保存で失われなくなりました。',
+        'OpenAI の推論モデル（o シリーズ、GPT-5）が、api.openai.com を指すカスタムプロバイダー経由でも動作するようになりました。',
+        'Windows：インストーラーに正しいアプリアイコンが付きました。',
+      ],
+    },
+  },
+  {
     version: '0.9.0',
     items: {
       en: [
