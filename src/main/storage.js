@@ -125,6 +125,7 @@ export const DEFAULT_GENERATION_PARAMS = {
 export const DEFAULT_SETTINGS = {
   appMode: 'chat', // chat (general assistant) | roleplay (Story mode: characters, personas, lore)
   language: 'system', // UI language: system | en | es | zh-CN | ja
+  lastSeenVersion: '', // last app version launched; drives the What's New dialog
   chatSystemPrompt: '', // chat-mode system prompt ('' = built-in default)
   requestImageOutput: false, // ask the chat model itself for image responses (advanced)
   // Dedicated image generation (🎨 button): provider '' = same as chat

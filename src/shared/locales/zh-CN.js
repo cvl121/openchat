@@ -532,6 +532,9 @@ export const zhCN = {
   'updates.available': 'OpenChat {version} 已发布',
   'updates.viewRelease': '查看发布说明',
   'updates.skipVersion': '跳过此版本',
+  'whatsnew.title': 'OpenChat 新功能',
+  'whatsnew.version': '版本 {version}',
+  'whatsnew.close': '知道了',
 
   // --- Mode switch toasts -------------------------------------------------
   'mode.chatToast': '聊天模式：简洁的助手聊天',

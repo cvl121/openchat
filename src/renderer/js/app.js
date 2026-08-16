@@ -3,7 +3,9 @@
 
 import { el, clear, modal, toast } from './util.js';
 import { sanitizeFilename } from '../../shared/filenames.js';
-import { t, setLocale, resolveLocale } from '../../shared/i18n.js';
+import { t, setLocale, resolveLocale, currentLocale } from '../../shared/i18n.js';
+import { compareVersions } from '../../shared/version.js';
+import { notesSince } from '../../shared/whatsnew.js';
 import { state, loadAll, scheduleSettingsSave, saveSettingsNow, saveSettingsSync, isChatMode, isCurrentChatGenerating, PROVIDERS } from './state.js';
 import { initSidebar, renderSidebar, toggleSidebar } from './views/sidebar.js';
 import {
@@ -301,6 +303,52 @@ function bindShortcuts() {
 }
 
 /** Dismissible banner shown when a newer release is found on GitHub. */
+/**
+ * One-time What's New dialog after an update: shown when the app launches
+ * with a version newer than the last one recorded in settings. Fresh
+ * installs (and installs predating the feature) record the version silently.
+ */
+async function maybeShowWhatsNew() {
+  let version = '';
+  try {
+    version = await window.tavern.misc.appVersion();
+  } catch {
+    return;
+  }
+  const s = state.settings;
+  if (!version || s.lastSeenVersion === version) return;
+  const prev = s.lastSeenVersion;
+  s.lastSeenVersion = version;
+  scheduleSettingsSave();
+  if (!prev || compareVersions(version, prev) <= 0) return;
+  const entries = notesSince(prev, version, currentLocale());
+  if (!entries.length) return;
+
+  const body = el(
+    'div',
+    {},
+    el('h2', {}, t('whatsnew.title')),
+    ...entries.map((entry) =>
+      el(
+        'div',
+        {},
+        el(
+          'h3',
+          { style: { margin: '14px 0 8px', fontSize: '12px', color: 'var(--text-dim)', textTransform: 'uppercase' } },
+          t('whatsnew.version', { version: entry.version })
+        ),
+        el('ul', { style: { margin: '0 0 4px', paddingLeft: '20px', lineHeight: 1.7 } },
+          entry.items.map((item) => el('li', {}, item)))
+      )
+    )
+  );
+  const overlay = modal(el('div', {}, body), { width: 520 });
+  body.append(
+    el('div', { class: 'modal-actions' },
+      el('button', { class: 'btn btn-primary', onclick: () => overlay.close() }, t('whatsnew.close')))
+  );
+}
+
 function showUpdateBanner({ version, url }) {
   document.getElementById('update-banner')?.remove();
   const banner = el(
@@ -383,6 +431,7 @@ async function main() {
   renderSidebar();
 
   if (!state.settings.onboardingComplete) showOnboarding();
+  else maybeShowWhatsNew();
   console.log(`[OpenChat] ready — mode: ${state.settings.appMode}, ${state.characters.length} characters, view: ${state.view}`);
 }
 

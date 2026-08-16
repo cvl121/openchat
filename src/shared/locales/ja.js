@@ -532,6 +532,9 @@ export const ja = {
   'updates.available': 'OpenChat {version} が利用可能です',
   'updates.viewRelease': 'リリースを見る',
   'updates.skipVersion': 'このバージョンをスキップ',
+  'whatsnew.title': 'OpenChat の新機能',
+  'whatsnew.version': 'バージョン {version}',
+  'whatsnew.close': 'OK',
 
   // --- Mode switch toasts -------------------------------------------------
   'mode.chatToast': 'チャットモード: シンプルなアシスタントチャット',

@@ -532,6 +532,9 @@ export const es = {
   'updates.available': 'OpenChat {version} está disponible',
   'updates.viewRelease': 'Ver la versión',
   'updates.skipVersion': 'Omitir esta versión',
+  'whatsnew.title': 'Novedades de OpenChat',
+  'whatsnew.version': 'Versión {version}',
+  'whatsnew.close': 'Entendido',
 
   // --- Mode switch toasts -------------------------------------------------
   'mode.chatToast': 'Modo chat: un chat de asistente limpio',

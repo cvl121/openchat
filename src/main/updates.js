@@ -2,21 +2,12 @@
 // and hands the release URL to the UI — no downloads, no auto-install.
 // Electron-free (like storage.js) so it can be tested under plain Node.
 import { t } from '../shared/i18n.js';
+import { compareVersions } from '../shared/version.js';
 
 export const RELEASES_API = 'https://api.github.com/repos/cvl121/openchat/releases/latest';
 export const RELEASES_PAGE = 'https://github.com/cvl121/openchat/releases/latest';
 
-/** Compare dotted version strings numerically ('1.10.0' > '1.2.0'). Returns -1 | 0 | 1. */
-export function compareVersions(a, b) {
-  const parse = (v) => String(v ?? '').trim().replace(/^v/i, '').split('.').map((n) => parseInt(n, 10) || 0);
-  const pa = parse(a);
-  const pb = parse(b);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (d) return d < 0 ? -1 : 1;
-  }
-  return 0;
-}
+export { compareVersions };
 
 /**
  * Decide whether a GitHub release object is a reportable update.
