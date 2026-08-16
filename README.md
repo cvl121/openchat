@@ -205,7 +205,7 @@ npm test      # run the unit tests (node --test)
 
 Layout: `src/main/` is the Electron main process (LLM providers in `llm.js`, disk layer in `storage.js`, IPC surface in `ipc.js`), `src/renderer/` is the UI (views in `js/views/`, prompt assembly in `js/promptBuilder.js`). Tests live in `tests/` and run on every push and pull request.
 
-Bug reports, feature requests, and PRs are welcome on the [issue tracker](https://github.com/cvl121/openchat/issues). Please keep PRs dependency-free and run `npm test` before submitting.
+Bug reports and feature requests are welcome on the [issue tracker](https://github.com/cvl121/openchat/issues). **Pull requests are by invitation**: please open an issue first to discuss your change — see [CONTRIBUTING.md](CONTRIBUTING.md). Contributions should stay dependency-free and pass `npm test`.
 
 ## License
 
