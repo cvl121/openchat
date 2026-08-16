@@ -173,7 +173,9 @@ export function openCharacterEditor(character) {
             }
             try {
               if (draft.character_book && !draft.character_book.entries?.length) draft.character_book = null;
-              const card = { spec: 'chara_card_v2', spec_version: '2.0', data: draft };
+              // Spread the existing data under the draft so fields the editor
+              // doesn't cover (extensions, V3 assets/nickname, …) survive a save.
+              const card = { spec: 'chara_card_v2', spec_version: '2.0', data: { ...existing, ...draft } };
               const saved = await window.tavern.characters.save(card, {
                 filename: character?.filename,
                 avatarPath,

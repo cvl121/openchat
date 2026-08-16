@@ -222,8 +222,13 @@ function openAIContent(m) {
 function openAICompatibleBody(messages, config, stream) {
   const p = config.params;
   // OpenAI reasoning models (o-series, gpt-5) take max_completion_tokens and
-  // reject non-default sampling parameters.
-  const reasoning = config.provider === 'openai' && /^(o\d|gpt-5)/.test(config.model);
+  // reject non-default sampling parameters. Also applies when the custom
+  // provider points directly at api.openai.com; other OpenAI-compatible
+  // servers keep the standard body even for models with matching names.
+  const reasoning =
+    /^(o\d|gpt-5)/.test(config.model) &&
+    (config.provider === 'openai' ||
+      (config.provider === 'custom' && effectiveBaseURL(config).includes('api.openai.com')));
   const body = {
     model: config.model,
     messages: messages.map((m) => ({ role: m.role, content: openAIContent(m) })),

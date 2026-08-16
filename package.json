@@ -72,7 +72,7 @@
         "nsis",
         "zip"
       ],
-      "icon": "build/icon.icns"
+      "icon": "build/icon.png"
     },
     "nsis": {
       "oneClick": false,

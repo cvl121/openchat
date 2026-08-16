@@ -52,7 +52,7 @@ async function removeFile(full) {
   fs.unlinkSync(full);
 }
 
-const SUBDIRS = ['characters', 'chats', 'worlds', 'user', 'User Avatars', 'presets', 'backups', 'uploads'];
+const SUBDIRS = ['characters', 'chats', 'worlds', 'user', 'User Avatars', 'presets', 'uploads'];
 
 export function initStorage(dataDir, secrets = {}) {
   DATA_DIR = dataDir;
