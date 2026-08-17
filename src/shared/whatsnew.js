@@ -9,6 +9,31 @@ import { compareVersions } from './version.js';
 
 export const WHATS_NEW = [
   {
+    version: '0.9.2',
+    items: {
+      en: [
+        'New provider: NanoGPT — hundreds of models with one pay-as-you-go key, with live pricing and context sizes in the model picker.',
+        'Simpler provider lineup: OpenRouter, NanoGPT, OpenAI, Anthropic Claude, and Google Gemini. If your previous provider was removed, pick a new one in Settings → API.',
+        'Fixed the update check sometimes reporting a new version when you were already up to date.',
+      ],
+      es: [
+        'Nuevo proveedor: NanoGPT — cientos de modelos con una sola clave de pago por uso, con precios y tamaños de contexto en vivo en el selector de modelos.',
+        'Lista de proveedores simplificada: OpenRouter, NanoGPT, OpenAI, Anthropic Claude y Google Gemini. Si tu proveedor anterior fue eliminado, elige uno nuevo en Ajustes → API.',
+        'Corregido: la comprobación de actualizaciones a veces indicaba una nueva versión cuando ya estabas al día.',
+      ],
+      'zh-CN': [
+        '新增服务商：NanoGPT — 一个按量付费的密钥即可使用数百个模型，模型选择器中实时显示价格和上下文大小。',
+        '服务商列表更精简：OpenRouter、NanoGPT、OpenAI、Anthropic Claude 和 Google Gemini。如果你之前的服务商已被移除，请在 设置 → API 中重新选择。',
+        '修复了已是最新版本时更新检查仍可能提示新版本的问题。',
+      ],
+      ja: [
+        '新しいプロバイダー: NanoGPT — 従量課金のキー1つで数百のモデルを利用でき、モデル選択画面に価格とコンテキストサイズをライブ表示します。',
+        'プロバイダー構成を整理: OpenRouter、NanoGPT、OpenAI、Anthropic Claude、Google Gemini。以前のプロバイダーが削除された場合は、設定 → API で選び直してください。',
+        '最新版なのに更新チェックが新バージョンありと表示することがある問題を修正しました。',
+      ],
+    },
+  },
+  {
     version: '0.9.1',
     items: {
       en: [

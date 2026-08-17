@@ -1,7 +1,7 @@
 {
   "name": "openchat",
   "productName": "OpenChat",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "AI character chat for desktop — a fast, native-feeling Electron app inspired by SillyTavern",
   "author": {
     "name": "OpenChat",
@@ -36,7 +36,12 @@
       "icon": "build/icon.icns",
       "extendInfo": {
         "CFBundleDevelopmentRegion": "en",
-        "CFBundleLocalizations": ["en", "es", "zh_CN", "ja"]
+        "CFBundleLocalizations": [
+          "en",
+          "es",
+          "zh_CN",
+          "ja"
+        ]
       },
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
