@@ -9,6 +9,23 @@ import { compareVersions } from './version.js';
 
 export const WHATS_NEW = [
   {
+    version: '0.9.3',
+    items: {
+      en: [
+        'One-click updates: when a new version is out, the banner now downloads and installs it right in the app — no more manual downloads (macOS, Windows, and Linux AppImage; starting with the next update).',
+      ],
+      es: [
+        'Actualizaciones con un clic: cuando hay una nueva versión, el banner ahora la descarga e instala directamente en la app — se acabaron las descargas manuales (macOS, Windows y AppImage de Linux; a partir de la próxima actualización).',
+      ],
+      'zh-CN': [
+        '一键更新：有新版本时，横幅现在可以直接在应用内下载并安装 — 无需再手动下载（macOS、Windows 和 Linux AppImage；从下一次更新开始生效）。',
+      ],
+      ja: [
+        'ワンクリック更新: 新しいバージョンが出ると、バナーからアプリ内で直接ダウンロードしてインストールできるようになりました — 手動ダウンロードは不要です（macOS、Windows、Linux AppImage。次回の更新から有効）。',
+      ],
+    },
+  },
+  {
     version: '0.9.2',
     items: {
       en: [
