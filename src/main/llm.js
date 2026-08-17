@@ -1,10 +1,9 @@
 // LLM provider integrations. All requests run in the main process (no CORS
 // constraints) and stream chunks back to the renderer via callbacks.
 //
-// Providers: OpenRouter (primary), OpenAI, Anthropic Claude, Google Gemini,
-// DeepSeek, Kimi (Moonshot), Qwen (DashScope), Ollama (local), and custom
-// OpenAI-compatible servers. All but Claude/Gemini/Ollama share the
-// OpenAI-compatible chat/completions wire format.
+// Providers: OpenRouter (primary), NanoGPT, OpenAI, Anthropic Claude, and
+// Google Gemini. All but Claude/Gemini share the OpenAI-compatible
+// chat/completions wire format.
 
 import { PROVIDERS } from '../shared/providers.js';
 import { t } from '../shared/i18n.js';
@@ -57,22 +56,6 @@ export const STATIC_MODEL_PRICING = {
     'gemini-2.5-flash': { inPerM: 0.3, outPerM: 2.5 },
     'gemini-2.0-flash': { inPerM: 0.1, outPerM: 0.4 },
   },
-  deepseek: {
-    'deepseek-chat': { inPerM: 0.28, outPerM: 0.42 },
-    'deepseek-reasoner': { inPerM: 0.28, outPerM: 0.42 },
-  },
-  kimi: {
-    kimi: { inPerM: 0.6, outPerM: 2.5 },
-    'moonshot-v1': { inPerM: 0.6, outPerM: 2.5 },
-  },
-  qwen: {
-    'qwen-max': { inPerM: 1.6, outPerM: 6.4 },
-    'qwen-plus': { inPerM: 0.4, outPerM: 1.2 },
-    'qwen-turbo': { inPerM: 0.05, outPerM: 0.2 },
-    'qwen-flash': { inPerM: 0.05, outPerM: 0.4 },
-  },
-  // Local models cost nothing to run per-token
-  ollama: { '': { inPerM: 0, outPerM: 0 } },
 };
 
 // --- Live reference pricing from the public OpenRouter catalog --------------
@@ -86,9 +69,6 @@ const OPENROUTER_VENDOR_TO_PROVIDER = {
   openai: 'openai',
   anthropic: 'claude',
   google: 'gemini',
-  deepseek: 'deepseek',
-  moonshotai: 'kimi',
-  qwen: 'qwen',
 };
 
 /** "claude-opus-4.8", "claude-opus-4-8", and dated snapshots share one key. */
@@ -176,14 +156,11 @@ export const FALLBACK_MODELS = {
     'gemini-3.1-pro-preview', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash',
     'gemini-2.0-flash-lite', 'gemini-1.5-pro', 'gemini-1.5-flash',
   ],
-  deepseek: ['deepseek-chat', 'deepseek-reasoner'],
-  kimi: [
-    'kimi-latest', 'kimi-k2-turbo-preview', 'kimi-k2-0905-preview', 'kimi-thinking-preview',
-    'moonshot-v1-128k', 'moonshot-v1-32k', 'moonshot-v1-8k',
+  nanogpt: [
+    'google/gemini-3.1-pro-preview', 'anthropic/claude-sonnet-5', 'anthropic/claude-sonnet-latest',
+    'openai/gpt-5.6-sol', 'openai/gpt-5.6-luna', 'x-ai/grok-4.6',
+    'deepseek/deepseek-v3.2', 'meta-llama/llama-4-maverick', 'meta-llama/llama-3.3-70b-instruct',
   ],
-  qwen: ['qwen-plus', 'qwen-max', 'qwen-turbo', 'qwen-flash', 'qwen3-max'],
-  ollama: ['llama3.3', 'llama3.1', 'mistral', 'qwen2.5', 'gemma3', 'deepseek-r1'],
-  custom: [],
 };
 
 export class LLMError extends Error {
@@ -222,13 +199,10 @@ function openAIContent(m) {
 function openAICompatibleBody(messages, config, stream) {
   const p = config.params;
   // OpenAI reasoning models (o-series, gpt-5) take max_completion_tokens and
-  // reject non-default sampling parameters. Also applies when the custom
-  // provider points directly at api.openai.com; other OpenAI-compatible
-  // servers keep the standard body even for models with matching names.
-  const reasoning =
-    /^(o\d|gpt-5)/.test(config.model) &&
-    (config.provider === 'openai' ||
-      (config.provider === 'custom' && effectiveBaseURL(config).includes('api.openai.com')));
+  // reject non-default sampling parameters. Aggregators (OpenRouter, NanoGPT)
+  // translate the standard body themselves, so this only applies to the
+  // direct OpenAI API.
+  const reasoning = /^(o\d|gpt-5)/.test(config.model) && config.provider === 'openai';
   const body = {
     model: config.model,
     messages: messages.map((m) => ({ role: m.role, content: openAIContent(m) })),
@@ -243,9 +217,8 @@ function openAICompatibleBody(messages, config, stream) {
         }),
     stream,
   };
-  // OpenRouter and most self-hosted OpenAI-compatible servers pass
-  // provider-specific sampler params straight through
-  if (config.provider === 'openrouter' || config.provider === 'custom') {
+  // The aggregators pass provider-specific sampler params straight through
+  if (config.provider === 'openrouter' || config.provider === 'nanogpt') {
     if (p.min_p > 0) body.min_p = p.min_p;
     if (p.top_k > 0) body.top_k = p.top_k;
     if (p.top_a > 0) body.top_a = p.top_a;
@@ -258,37 +231,6 @@ function openAICompatibleBody(messages, config, stream) {
     body.modalities = ['image', 'text'];
   }
   return body;
-}
-
-function ollamaBody(messages, config, stream) {
-  const p = config.params;
-  return {
-    model: config.model,
-    messages: messages.map((m) => ({
-      role: m.role,
-      content: m.content ?? '',
-      ...(m.images?.length
-        ? { images: m.images.map(parseDataURL).filter(Boolean).map(({ data }) => data) }
-        : {}),
-    })),
-    options: {
-      num_predict: p.max_tokens,
-      temperature: p.temperature,
-      top_p: p.top_p,
-      ...(p.context_size > 0 ? { num_ctx: p.context_size } : {}),
-      ...(p.top_k > 0 ? { top_k: p.top_k } : {}),
-      ...(p.min_p > 0 ? { min_p: p.min_p } : {}),
-      ...(p.repetition_penalty !== 1.0 ? { repeat_penalty: p.repetition_penalty } : {}),
-      ...(p.typical_p != null && p.typical_p !== 1.0 ? { typical_p: p.typical_p } : {}),
-      ...(p.tfs != null && p.tfs !== 1.0 ? { tfs_z: p.tfs } : {}),
-      ...(p.mirostat_mode > 0
-        ? { mirostat: p.mirostat_mode, mirostat_tau: p.mirostat_tau, mirostat_eta: p.mirostat_eta }
-        : {}),
-      ...(p.seed >= 0 ? { seed: p.seed } : {}),
-      ...(p.stop_sequences?.length ? { stop: p.stop_sequences } : {}),
-    },
-    stream,
-  };
 }
 
 function buildRequest(messages, config, stream) {
@@ -308,31 +250,14 @@ function buildRequest(messages, config, stream) {
       };
 
     case 'openai':
-    case 'deepseek':
-    case 'kimi':
-    case 'qwen':
-    case 'custom':
-      if (config.provider === 'custom' && !base) {
-        throw new LLMError(t('errors.customNeedsBaseURL'));
-      }
+    case 'nanogpt':
       return {
         url: `${base}/chat/completions`,
         headers: {
           'Content-Type': 'application/json',
-          ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+          Authorization: `Bearer ${config.apiKey}`,
         },
         body: openAICompatibleBody(messages, config, stream),
-      };
-
-    case 'ollama':
-      // Native API rather than the OpenAI shim: only /api/chat accepts
-      // options.num_ctx, without which long chats silently truncate at
-      // Ollama's small default context window. Streams NDJSON, not SSE.
-      return {
-        url: `${base.replace(/\/v1$/, '')}/api/chat`,
-        headers: { 'Content-Type': 'application/json' },
-        body: ollamaBody(messages, config, stream),
-        ndjson: true,
       };
 
     case 'claude': {
@@ -439,8 +364,6 @@ function extractChunk(provider, json) {
     case 'gemini':
       // Multi-part chunks happen in image-output mode (text after an image part)
       return json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') || null;
-    case 'ollama':
-      return json.message?.content ?? null;
     default:
       return json.choices?.[0]?.delta?.content ?? null;
   }
@@ -452,8 +375,6 @@ function extractComplete(provider, json) {
       return (json.content ?? []).map((b) => b.text ?? '').join('');
     case 'gemini':
       return json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
-    case 'ollama':
-      return json.message?.content ?? '';
     default:
       return json.choices?.[0]?.message?.content ?? '';
   }
@@ -470,8 +391,6 @@ function extractFinishReason(provider, json) {
       return json.delta?.stop_reason ?? json.stop_reason ?? null;
     case 'gemini':
       return json.candidates?.[0]?.finishReason ?? null;
-    case 'ollama':
-      return json.done ? (json.done_reason ?? 'stop') : null;
     default:
       return json.choices?.[0]?.finish_reason ?? null;
   }
@@ -488,7 +407,6 @@ function extractImages(provider, json) {
         .map((d) => `data:${d.mimeType ?? d.mime_type ?? 'image/png'};base64,${d.data}`);
     }
     case 'claude':
-    case 'ollama':
       return [];
     default: {
       // OpenRouter image-capable models attach images to the delta/message
@@ -530,23 +448,6 @@ async function* sseEvents(response) {
       if (data) yield data;
     }
   }
-}
-
-/** Async-iterate JSON lines from an NDJSON stream (Ollama's native API). */
-async function* ndjsonEvents(response) {
-  const decoder = new TextDecoder();
-  let buffer = '';
-  for await (const chunk of response.body) {
-    buffer += decoder.decode(chunk, { stream: true });
-    let nl;
-    while ((nl = buffer.indexOf('\n')) !== -1) {
-      const line = buffer.slice(0, nl).trim();
-      buffer = buffer.slice(nl + 1);
-      if (line) yield line;
-    }
-  }
-  buffer = (buffer + decoder.decode()).trim();
-  if (buffer) yield buffer;
 }
 
 async function readErrorBody(response) {
@@ -676,8 +577,7 @@ async function attemptSend(req, config, stream, { onChunk, onImage, onFinishReas
 
     let full = '';
     let finishReason = null;
-    const events = req.ndjson ? ndjsonEvents(response) : sseEvents(response);
-    for await (const data of events) {
+    for await (const data of sseEvents(response)) {
       resetIdle();
       let json;
       try {
@@ -757,11 +657,10 @@ export async function listModels(config) {
           .filter((m) => /gpt|^o\d/.test(m.id))
           .sort((a, b) => a.id.localeCompare(b.id));
       }
-      case 'deepseek':
-      case 'kimi':
-      case 'qwen':
-      case 'custom': {
-        const res = await fetch(`${effectiveBaseURL(config)}/models`, {
+      case 'nanogpt': {
+        // detailed=true adds name, context_length, per-million pricing, and
+        // output modalities to the otherwise-bare OpenAI-style list
+        const res = await fetch(`${effectiveBaseURL(config)}/models?detailed=true`, {
           headers: config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {},
         });
         if (!res.ok) throw new LLMError(`HTTP ${res.status}`, { status: res.status });
@@ -769,12 +668,15 @@ export async function listModels(config) {
         return (json.data ?? [])
           .map((m) => ({
             id: m.id,
-            name: m.id,
-            // LM Studio / vLLM / llama.cpp report the window under varying keys
-            context: m.context_length ?? m.max_model_len ?? m.max_context_length ?? null,
-            imageOutput: false,
-            // null for 'custom' — no reference table for arbitrary servers
-            pricing: referencePricing(config.provider, m.id),
+            name: m.name ?? m.id,
+            context: m.context_length ?? null,
+            imageOutput: (m.architecture?.output_modalities ?? []).includes('image'),
+            pricing: m.pricing
+              ? {
+                  inPerM: parseFloat(m.pricing.prompt) || 0,
+                  outPerM: parseFloat(m.pricing.completion) || 0,
+                }
+              : null,
           }))
           .sort((a, b) => a.id.localeCompare(b.id));
       }
@@ -803,13 +705,6 @@ export async function listModels(config) {
             imageOutput: /image/i.test(m.name),
           }))
           .sort((a, b) => a.id.localeCompare(b.id));
-      }
-      case 'ollama': {
-        const base = effectiveBaseURL(config).replace(/\/v1$/, '');
-        const res = await fetch(`${base}/api/tags`);
-        if (!res.ok) throw new LLMError(`HTTP ${res.status}`, { status: res.status });
-        const json = await res.json();
-        return (json.models ?? []).map((m) => ({ id: m.name, name: m.name, context: null, imageOutput: false, pricing: lookupModelPricing('ollama', m.name) }));
       }
       default:
         return FALLBACK_MODELS[config.provider].map((id) => ({ id, name: id, context: null, imageOutput: false, pricing: referencePricing(config.provider, id) }));

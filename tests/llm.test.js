@@ -39,11 +39,9 @@ test('lookupModelPricing: exact ids, dated-id prefixes, and longest-prefix wins'
   // Gemini flash-lite must beat the shorter "gemini-2.5-flash" prefix
   assert.equal(lookupModelPricing('gemini', 'gemini-2.5-flash-lite-preview').inPerM, 0.1);
   assert.equal(lookupModelPricing('gemini', 'gemini-2.5-flash-preview-05-20').inPerM, 0.3);
-  // Local models are free
-  assert.deepEqual(lookupModelPricing('ollama', 'llama3.1'), { inPerM: 0, outPerM: 0 });
   // Unknown model / provider without a table
   assert.equal(lookupModelPricing('openai', 'some-experimental-model'), null);
-  assert.equal(lookupModelPricing('custom', 'gpt-4o'), null);
+  assert.equal(lookupModelPricing('nanogpt', 'gpt-4o'), null);
   assert.equal(lookupModelPricing('openrouter', 'openai/gpt-4o'), null);
 });
 
@@ -397,7 +395,7 @@ test('getCredits returns remaining balance from OpenRouter', async () => {
     assert.deepEqual(credits, { total: 25, used: 4.5, remaining: 20.5 });
     assert.equal(server.lastAuth, 'Bearer test-key');
     // Non-OpenRouter providers have no balance endpoint
-    assert.equal(await getCredits(config(server, { provider: 'ollama' })), null);
+    assert.equal(await getCredits(config(server, { provider: 'nanogpt' })), null);
   } finally {
     server.close();
   }
@@ -434,22 +432,6 @@ test('OpenAI reasoning models get max_completion_tokens and no sampling params',
     body = server.lastRequest.body;
     assert.equal(body.max_tokens, 128);
     assert.equal(body.temperature, 0.7);
-  } finally {
-    server.close();
-  }
-});
-
-test('custom provider requires a base URL and auth is optional', async () => {
-  const server = await startMockServer();
-  try {
-    await assert.rejects(
-      sendMessage([{ role: 'user', content: 'hi' }], config(server, { provider: 'custom', baseURL: '' }), null),
-      /base URL/
-    );
-    await sendMessage([{ role: 'user', content: 'hi' }], config(server, { provider: 'custom', apiKey: '' }), null);
-    assert.equal(server.lastRequest.headers.authorization, undefined);
-    await sendMessage([{ role: 'user', content: 'hi' }], config(server, { provider: 'custom' }), null);
-    assert.equal(server.lastRequest.headers.authorization, 'Bearer test-key');
   } finally {
     server.close();
   }
@@ -519,78 +501,66 @@ test('stream failures after content arrived are not retried', async () => {
   }
 });
 
-test('ollama uses the native /api/chat with num_ctx and NDJSON streaming', async () => {
-  const server = http.createServer((req, res) => {
-    let body = '';
-    req.on('data', (c) => (body += c));
-    req.on('end', () => {
-      server.lastRequest = { url: req.url, body: JSON.parse(body) };
-      res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
-      res.write(JSON.stringify({ message: { content: 'Hello ' }, done: false }) + '\n');
-      res.write(JSON.stringify({ message: { content: 'local' }, done: true, done_reason: 'stop' }) + '\n');
-      res.end();
-    });
-  });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  try {
-    const cfg = config(server, { provider: 'ollama', apiKey: '' });
-    cfg.params.context_size = 8192;
-    cfg.params.typical_p = 0.9;
-    cfg.params.tfs = 0.95;
-    cfg.params.mirostat_mode = 2;
-    cfg.params.mirostat_tau = 5;
-    cfg.params.mirostat_eta = 0.1;
-    const chunks = [];
-    let reason = null;
-    const full = await sendMessage(
-      [{ role: 'user', content: 'hi', images: ['data:image/png;base64,QUJD'] }],
-      cfg,
-      (t) => chunks.push(t),
-      { onFinishReason: (r) => (reason = r) }
-    );
-    assert.equal(full, 'Hello local');
-    assert.deepEqual(chunks, ['Hello ', 'local']);
-    assert.equal(reason, 'stop');
-    assert.ok(server.lastRequest.url.endsWith('/api/chat'));
-    assert.equal(server.lastRequest.body.options.num_ctx, 8192);
-    assert.equal(server.lastRequest.body.options.num_predict, 128);
-    // Ollama-only samplers pass through under their native names
-    assert.equal(server.lastRequest.body.options.typical_p, 0.9);
-    assert.equal(server.lastRequest.body.options.tfs_z, 0.95);
-    assert.equal(server.lastRequest.body.options.mirostat, 2);
-    assert.equal(server.lastRequest.body.options.mirostat_tau, 5);
-    assert.equal(server.lastRequest.body.options.mirostat_eta, 0.1);
-    assert.deepEqual(server.lastRequest.body.messages[0].images, ['QUJD']);
-  } finally {
-    server.close();
-  }
-});
-
 test('default models point at Gemini 3.1 Pro', () => {
   assert.equal(PROVIDERS.openrouter.defaultModel, 'google/gemini-3.1-pro-preview');
+  assert.equal(PROVIDERS.nanogpt.defaultModel, 'google/gemini-3.1-pro-preview');
   assert.equal(PROVIDERS.gemini.defaultModel, 'gemini-3.1-pro-preview');
 });
 
-test('deepseek/kimi/qwen use the OpenAI wire format with bearer auth', async () => {
+test('nanogpt uses the OpenAI wire format with bearer auth and sampler passthrough', async () => {
   const server = await startMockServer();
   try {
-    for (const provider of ['deepseek', 'kimi', 'qwen']) {
-      const full = await sendMessage([{ role: 'user', content: 'hi' }], config(server, { provider }), null);
-      assert.equal(full, 'Hello from the tavern!');
-      assert.ok(server.lastRequest.url.endsWith('/chat/completions'));
-      assert.equal(server.lastRequest.headers.authorization, 'Bearer test-key');
-      assert.equal(server.lastRequest.body.max_tokens, 128);
-    }
+    const cfg = config(server, { provider: 'nanogpt' });
+    cfg.params.min_p = 0.05;
+    const full = await sendMessage([{ role: 'user', content: 'hi' }], cfg, null);
+    assert.equal(full, 'Hello from the tavern!');
+    assert.ok(server.lastRequest.url.endsWith('/chat/completions'));
+    assert.equal(server.lastRequest.headers.authorization, 'Bearer test-key');
+    assert.equal(server.lastRequest.body.max_tokens, 128);
+    // Aggregator: provider-specific samplers pass straight through
+    assert.equal(server.lastRequest.body.min_p, 0.05);
   } finally {
     server.close();
   }
 });
 
-test('deepseek/kimi/qwen have hosted default base URLs and fallback models', () => {
-  for (const provider of ['deepseek', 'kimi', 'qwen']) {
-    assert.match(PROVIDERS[provider].baseURL, /^https:\/\//);
-    assert.equal(PROVIDERS[provider].requiresKey, true);
-    assert.ok(FALLBACK_MODELS[provider].length > 0);
-    assert.ok(FALLBACK_MODELS[provider].includes(PROVIDERS[provider].defaultModel));
+test('nanogpt listModels requests the detailed catalog and maps its fields', async () => {
+  const server = http.createServer((req, res) => {
+    server.lastURL = req.url;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ data: [
+      {
+        id: 'anthropic/claude-sonnet-5',
+        name: 'Claude Sonnet 5',
+        context_length: 1000000,
+        architecture: { output_modalities: ['text'] },
+        pricing: { prompt: 2, completion: 10, currency: 'USD', unit: 'per_million_tokens' },
+      },
+      { id: 'bare-model' }, // basic (non-detailed) entry shape
+    ]}));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const models = await listModels(config(server, { provider: 'nanogpt' }));
+    assert.equal(server.lastURL, '/models?detailed=true');
+    const sonnet = models.find((m) => m.id === 'anthropic/claude-sonnet-5');
+    assert.equal(sonnet.name, 'Claude Sonnet 5');
+    assert.equal(sonnet.context, 1000000);
+    assert.equal(sonnet.imageOutput, false);
+    assert.deepEqual(sonnet.pricing, { inPerM: 2, outPerM: 10 });
+    const bare = models.find((m) => m.id === 'bare-model');
+    assert.equal(bare.name, 'bare-model');
+    assert.equal(bare.pricing, null);
+  } finally {
+    server.close();
+  }
+});
+
+test('every provider is hosted, keyed, and covered by fallback models', () => {
+  for (const [provider, p] of Object.entries(PROVIDERS)) {
+    assert.match(p.baseURL, /^https:\/\//);
+    assert.equal(p.requiresKey, true);
+    assert.ok(FALLBACK_MODELS[provider].length > 0, `no fallback models for ${provider}`);
+    assert.ok(FALLBACK_MODELS[provider].includes(p.defaultModel), `default model of ${provider} missing from fallbacks`);
   }
 });

@@ -20,6 +20,7 @@ import {
   minimalPNG,
 } from './png.js';
 import { sanitizeFilename } from '../shared/filenames.js';
+import { PROVIDERS } from '../shared/providers.js';
 import { foldText, truncateChars } from '../shared/text.js';
 import { t } from '../shared/i18n.js';
 
@@ -188,6 +189,12 @@ export function loadSettings() {
       chatCompression: { ...base.chatCompression, ...(raw.chatCompression ?? {}) },
       imageGen: { ...base.imageGen, ...(raw.imageGen ?? {}) },
     };
+    // Settings saved by older versions may reference a provider that no
+    // longer exists — fall back to the default rather than crash the UI.
+    if (!PROVIDERS[settings.activeAPI]) settings.activeAPI = base.activeAPI;
+    if (settings.imageGen.provider && !PROVIDERS[settings.imageGen.provider]) {
+      settings.imageGen.provider = '';
+    }
     // API keys encrypted at rest via the OS keychain. Keep the opaque blob if
     // decryption is unavailable so a later save doesn't wipe the keys.
     if (settings.apiKeysEncrypted && SECRETS.decryptString) {

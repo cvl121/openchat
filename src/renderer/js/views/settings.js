@@ -136,32 +136,11 @@ function renderAPI() {
 
   const provider = PROVIDERS[s.activeAPI];
 
-  // Custom OpenAI-compatible server: the base URL is the whole point, so it
-  // lives here (not behind Advanced mode) and the key is optional.
-  if (provider.requiresBaseURL) {
-    const urlRow = textRow(t('settings.serverURL'), {
-      get: () => s.baseURLs?.[s.activeAPI] ?? '',
-      set: (v) => {
-        s.baseURLs = s.baseURLs ?? {};
-        if (v.trim()) s.baseURLs[s.activeAPI] = v.trim();
-        else delete s.baseURLs[s.activeAPI];
-        scheduleSettingsSave();
-      },
-      placeholder: 'http://localhost:1234/v1',
-      hint: t('settings.serverURLHint'),
-    });
-    // Once the URL is committed, re-render so the model list loads from it
-    urlRow.querySelector('input').addEventListener('change', () => renderSettings());
-    root.append(urlRow);
-  }
-
-  if (provider.requiresKey || provider.requiresBaseURL) {
+  {
     const keyInput = el('input', {
       type: 'password',
       value: s.apiKeys[s.activeAPI] ?? '',
-      placeholder: provider.requiresKey
-        ? t('settings.keyPlaceholder', { label: provider.label })
-        : t('settings.keyPlaceholderOptional'),
+      placeholder: t('settings.keyPlaceholder', { label: provider.label }),
     });
     keyInput.addEventListener('input', () => {
       s.apiKeys[s.activeAPI] = keyInput.value.trim();
@@ -179,25 +158,21 @@ function renderAPI() {
       el(
         'div',
         { class: 'form-row' },
-        el('label', {}, provider.requiresKey ? t('settings.apiKey') : t('settings.apiKeyOptional')),
+        el('label', {}, t('settings.apiKey')),
         el('div', { class: 'form-inline' }, keyInput, toggle),
-        provider.keyURL
-          ? el('div', { class: 'hint' },
-              t('settings.keyStoredProvider'),
-              el('a', {
-                href: '#',
-                style: { color: 'var(--accent)' },
-                onclick: (e) => {
-                  e.preventDefault();
-                  window.tavern.misc.openExternal(provider.keyURL);
-                },
-              }, provider.keyURL)
-            )
-          : el('div', { class: 'hint' }, t('settings.keyStoredServer'))
+        el('div', { class: 'hint' },
+          t('settings.keyStoredProvider'),
+          el('a', {
+            href: '#',
+            style: { color: 'var(--accent)' },
+            onclick: (e) => {
+              e.preventDefault();
+              window.tavern.misc.openExternal(provider.keyURL);
+            },
+          }, provider.keyURL)
+        )
       )
     );
-  } else if (s.activeAPI === 'ollama') {
-    root.append(el('p', { class: 'hint', style: { marginBottom: '12px' } }, t('settings.ollamaHint')));
   }
 
   // Model picker — the list loads automatically once a key is present
@@ -244,16 +219,11 @@ function renderAPI() {
     refreshBtn.disabled = false;
     refreshBtn.textContent = t('settings.refreshList');
   });
-  const canListModels = provider.requiresBaseURL
-    ? !!s.baseURLs?.[s.activeAPI]
-    : !provider.requiresKey || s.apiKeys[s.activeAPI];
-  if (canListModels) {
+  if (s.apiKeys[s.activeAPI]) {
     modelHint.textContent = t('settings.loadingModels');
     loadMainModels(false);
   } else {
-    modelHint.textContent = provider.requiresBaseURL
-      ? t('settings.enterURLForModels')
-      : t('settings.enterKeyForModels');
+    modelHint.textContent = t('settings.enterKeyForModels');
   }
   root.append(
     el('div', { class: 'form-row' },
@@ -299,7 +269,7 @@ function renderAPI() {
     );
   }
 
-  if (isAdvanced() && !provider.requiresBaseURL) {
+  if (isAdvanced()) {
     root.append(
       textRow(t('settings.baseURLOverride'), {
         get: () => s.baseURLs?.[s.activeAPI] ?? '',
@@ -765,8 +735,6 @@ function renderGeneration() {
     sliderRow(t('settings.topK'), { min: 0, max: 200, step: 1, get: () => p.top_k, set: set('top_k') }),
     sliderRow(t('settings.minP'), { min: 0, max: 1, step: 0.01, get: () => p.min_p, set: set('min_p') }),
     sliderRow(t('settings.topA'), { min: 0, max: 1, step: 0.01, get: () => p.top_a, set: set('top_a') }),
-    sliderRow(t('settings.typicalP'), { min: 0, max: 1, step: 0.01, get: () => p.typical_p, set: set('typical_p'),
-      hint: t('settings.typicalPHint') }),
     el('h3', {}, t('settings.repetitionControl')),
     sliderRow(t('settings.freqPenalty'), { min: -2, max: 2, step: 0.05, get: () => p.frequency_penalty, set: set('frequency_penalty') }),
     sliderRow(t('settings.presPenalty'), { min: -2, max: 2, step: 0.05, get: () => p.presence_penalty, set: set('presence_penalty') }),

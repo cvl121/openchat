@@ -161,47 +161,31 @@ function showOnboarding() {
     const provider = PROVIDERS[providerId];
     const keyInput = el('input', {
       type: 'password',
-      placeholder: provider.requiresKey
-        ? t('settings.keyPlaceholder', { label: provider.label })
-        : t('settings.keyPlaceholderOptional'),
+      placeholder: t('settings.keyPlaceholder', { label: provider.label }),
     });
-    const urlInput = el('input', { type: 'text', placeholder: 'http://localhost:1234/v1' });
     const status = el('p', { class: 'hint', style: { minHeight: '18px', marginTop: '10px' } });
 
     body.append(el('p', { style: { lineHeight: 1.6, marginBottom: '12px' } }, el('strong', {}, provider.label)));
-    if (provider.requiresBaseURL) {
-      body.append(el('div', { class: 'form-row' }, el('label', {}, t('settings.serverURL')), urlInput));
-    }
-    if (providerId === 'ollama') {
-      body.append(el('p', { class: 'hint', style: { marginBottom: '10px' } }, t('onboarding.ollamaHint')));
-    } else {
-      body.append(
-        el('div', { class: 'form-row' },
-          el('label', {}, provider.requiresKey ? t('settings.apiKey') : t('settings.apiKeyOptional')),
-          keyInput,
-          provider.keyURL
-            ? el('div', { class: 'hint' },
-                t('onboarding.getKeyAt'),
-                el('a', {
-                  href: '#',
-                  style: { color: 'var(--accent)' },
-                  onclick: (e) => {
-                    e.preventDefault();
-                    window.tavern.misc.openExternal(provider.keyURL);
-                  },
-                }, provider.keyURL))
-            : null)
-      );
-    }
+    body.append(
+      el('div', { class: 'form-row' },
+        el('label', {}, t('settings.apiKey')),
+        keyInput,
+        el('div', { class: 'hint' },
+          t('onboarding.getKeyAt'),
+          el('a', {
+            href: '#',
+            style: { color: 'var(--accent)' },
+            onclick: (e) => {
+              e.preventDefault();
+              window.tavern.misc.openExternal(provider.keyURL);
+            },
+          }, provider.keyURL)))
+    );
     body.append(status);
 
     const apply = () => {
       s.activeAPI = providerId;
       if (keyInput.value.trim()) s.apiKeys[providerId] = keyInput.value.trim();
-      if (provider.requiresBaseURL && urlInput.value.trim()) {
-        s.baseURLs = s.baseURLs ?? {};
-        s.baseURLs[providerId] = urlInput.value.trim();
-      }
     };
     const finish = () => {
       overlay.close();
@@ -226,16 +210,6 @@ function showOnboarding() {
                 model: s.models?.[providerId] || provider.defaultModel,
                 params: { ...s.generationParams },
               };
-              // A custom server has no default model — grab its first one
-              if (!config.model) {
-                const models = await window.tavern.llm.models(config).catch(() => []);
-                if (models[0]) {
-                  config.model = models[0].id;
-                  s.models = s.models ?? {};
-                  s.models[providerId] = models[0].id;
-                  scheduleSettingsSave();
-                }
-              }
               const result = await window.tavern.llm.test(config);
               status.textContent = t('onboarding.connected', { ms: result.latencyMs });
               setTimeout(finish, 600);
@@ -247,7 +221,7 @@ function showOnboarding() {
         }, t('onboarding.testFinish')),
         el('button', { class: 'btn', onclick: () => { apply(); saveSettingsNow(); finish(); } }, t('common.finish')))
     );
-    (provider.requiresBaseURL ? urlInput : keyInput).focus();
+    keyInput.focus();
   }
 
   stepProvider();

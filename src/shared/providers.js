@@ -3,8 +3,8 @@
 // the two sides can't drift apart.
 //
 // Fields: label (UI name), baseURL (main-process default endpoint),
-// requiresKey / requiresBaseURL (what the UI must collect before sending),
-// defaultModel, keyURL (where to get a key; null when there isn't one).
+// requiresKey (what the UI must collect before sending), defaultModel,
+// keyURL (where to get a key).
 
 export const PROVIDERS = {
   openrouter: {
@@ -13,6 +13,13 @@ export const PROVIDERS = {
     requiresKey: true,
     defaultModel: 'google/gemini-3.1-pro-preview',
     keyURL: 'https://openrouter.ai/keys',
+  },
+  nanogpt: {
+    label: 'NanoGPT',
+    baseURL: 'https://nano-gpt.com/api/v1',
+    requiresKey: true,
+    defaultModel: 'google/gemini-3.1-pro-preview',
+    keyURL: 'https://nano-gpt.com/api',
   },
   openai: {
     label: 'OpenAI',
@@ -34,41 +41,5 @@ export const PROVIDERS = {
     requiresKey: true,
     defaultModel: 'gemini-3.1-pro-preview',
     keyURL: 'https://aistudio.google.com/apikey',
-  },
-  deepseek: {
-    label: 'DeepSeek',
-    baseURL: 'https://api.deepseek.com/v1',
-    requiresKey: true,
-    defaultModel: 'deepseek-chat',
-    keyURL: 'https://platform.deepseek.com/api_keys',
-  },
-  kimi: {
-    label: 'Kimi (Moonshot AI)',
-    baseURL: 'https://api.moonshot.ai/v1',
-    requiresKey: true,
-    defaultModel: 'kimi-latest',
-    keyURL: 'https://platform.moonshot.ai/console/api-keys',
-  },
-  qwen: {
-    label: 'Qwen (Alibaba)',
-    baseURL: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
-    requiresKey: true,
-    defaultModel: 'qwen-plus',
-    keyURL: 'https://modelstudio.console.alibabacloud.com/#/api-key',
-  },
-  ollama: {
-    label: 'Ollama (local)',
-    baseURL: 'http://localhost:11434/v1',
-    requiresKey: false,
-    defaultModel: 'llama3.1',
-    keyURL: 'https://ollama.ai',
-  },
-  custom: {
-    label: 'Custom (OpenAI-compatible)',
-    baseURL: '',
-    requiresKey: false,
-    requiresBaseURL: true,
-    defaultModel: '',
-    keyURL: null,
   },
 };

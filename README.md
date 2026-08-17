@@ -32,7 +32,7 @@ Your data stays compatible: character PNGs, world-info JSON, chat JSONL, and pre
 
 - **Two app modes** — **Chat** (the default) is a straightforward AI assistant with conversation history, file uploads, and image responses. **Story** unlocks role-playing with character cards, personas, world lore, swipes, and story tools. Switch anytime in Settings → General.
 - **Speaks your language** — the entire UI is available in **English, Spanish, Simplified Chinese, and Japanese**. It follows your system language automatically, or pick one in Settings → General → Language. Dates, relative times, search, and token counting are locale-aware, and the app menu switches too.
-- **Bring your own key — or none** — designed primarily around **OpenRouter** (one key, hundreds of models, live searchable model list), with OpenAI, Anthropic Claude, Google Gemini, DeepSeek, Kimi, Qwen, local **Ollama** (no key, runs on your machine), and any **custom OpenAI-compatible server** (LM Studio, vLLM, llama.cpp, Groq, Together, …) also supported.
+- **Bring your own key** — designed primarily around **OpenRouter** (one key, hundreds of models, live searchable model list), with **NanoGPT** (another one-key-many-models aggregator), OpenAI, Anthropic Claude, and Google Gemini also supported.
 - **Attachments & images** — attach images and text files to messages (multimodal models see the images; text files are inlined), and image-capable models can reply with images that are saved locally.
 - **Local-first** — characters, chats, settings, and API keys never leave your machine except as requests to your chosen AI provider. The only other network calls are an optional once-a-day version check against GitHub Releases (Settings → General) and an anonymous fetch of OpenRouter's public model catalog to show reference pricing for other providers' models (cached for ~6 hours).
 - **Compatible formats** — TavernCardV2 character cards (PNG/JSON), SillyTavern-style JSONL chats, world info books, and presets. One-click import of an existing data folder.
@@ -63,7 +63,7 @@ Chat mode keeps the sidebar as a simple conversation list (rename, export, delet
 - **Chat compression** — long chats are summarized in the background (threshold configurable) so each new reply stops resending the full history; Advanced mode can customize the summarization prompt
 - **Token counters** — live token estimate for your draft, plus a per-conversation counter (with compressed-message count) in the toolbar; estimates are script-aware (CJK text is counted at ~1 token per character) so context trimming works correctly for Japanese, Chinese, and Korean chats
 - **Account balance** — OpenRouter users see their remaining credits in Settings → API
-- **Model pickers that know your key** — model lists load automatically once a key is entered, for every provider including custom OpenAI-compatible servers
+- **Model pickers that know your key** — model lists load automatically once a key is entered, for every provider
 - **Swipes** — generate alternative responses and page between them; in Story mode, alternate greetings become swipes on the first message; older messages with stored swipes stay pageable
 - **Message editing** — edit, delete, or copy any message, and regenerate the last response; "Save & Regenerate" re-runs the reply after editing any of your messages (editing an older one rewinds the chat to it); undo up to 10 steps with Cmd+Z
 - **Continue & Impersonate** — extend the last response in place, or let the AI draft *your* next message into the input (Impersonate is Story mode only)
@@ -107,7 +107,7 @@ Switch in **Settings → General → User Mode**.
 | Provider, API key, model picker | ✓ | ✓ |
 | Temperature, max tokens, streaming toggle | ✓ | ✓ |
 | Chat styling, themes, personas, world lore | ✓ | ✓ |
-| Full samplers (top-p, top-k, min-p, top-a, typical-p) | | ✓ |
+| Full samplers (top-p, top-k, min-p, top-a) | | ✓ |
 | Repetition control (frequency/presence/repetition penalties) | | ✓ |
 | Stop sequences, seed, context size | | ✓ |
 | **Generation presets** (save/load, SillyTavern import/export) | | ✓ |
@@ -123,14 +123,10 @@ Regular mode is the default — everything works out of the box with sensible pa
 | Provider | What you need | Notes |
 |----------|---------------|-------|
 | [OpenRouter](https://openrouter.ai) | API key | **Recommended.** Hundreds of models, live model list, credit balance display, advanced samplers passed through. |
+| [NanoGPT](https://nano-gpt.com) | API key | Pay-as-you-go aggregator with hundreds of models; live model list with context sizes and pricing, advanced samplers passed through. |
 | [OpenAI](https://platform.openai.com) | API key | GPT models via Chat Completions. |
 | [Anthropic Claude](https://console.anthropic.com) | API key | Messages API with proper system-prompt and turn-alternation handling. |
 | [Google Gemini](https://aistudio.google.com) | API key | Streaming via SSE. |
-| [DeepSeek](https://platform.deepseek.com) | API key | DeepSeek V3 (`deepseek-chat`) and R1 (`deepseek-reasoner`). |
-| [Kimi](https://platform.moonshot.ai) | API key | Moonshot AI's Kimi K2 family. Defaults to the international endpoint; mainland-China users can point the Advanced base-URL override at `https://api.moonshot.cn/v1`. |
-| [Qwen](https://modelstudio.console.alibabacloud.com) | API key | Alibaba Model Studio (DashScope). Defaults to the international endpoint; mainland-China users can point the Advanced base-URL override at `https://dashscope.aliyuncs.com/compatible-mode/v1`. |
-| [Ollama](https://ollama.ai) | Local install | No key needed; native Ollama API, so Context Size passes through as `num_ctx`, and typical-p, TFS, and Mirostat samplers are supported. |
-| Custom (OpenAI-compatible) | A server URL | LM Studio, vLLM, llama.cpp, Groq, Together, DeepSeek, Mistral, xAI, proxies… Point it at the `/v1`-style root; key optional. |
 
 All requests run in the Electron main process (no CORS issues) and stream. Rate limits and server errors retry automatically with backoff; a stalled stream times out after two minutes. OpenAI reasoning models (o-series, GPT-5) get their parameter quirks (`max_completion_tokens`, unsupported sampler settings omitted) handled for you. Use **Settings → API → Test Connection** to verify a key with a tiny request.
 
@@ -146,7 +142,7 @@ npm install
 npm start
 ```
 
-1. **Connect** — the first-run wizard walks you through picking a provider and pasting a key (or pointing at a local Ollama / OpenAI-compatible server), with a built-in connection test. OpenRouter is the recommended starting point.
+1. **Connect** — the first-run wizard walks you through picking a provider and pasting a key, with a built-in connection test. OpenRouter is the recommended starting point.
 2. **Chat** — you start in Chat mode: just send a message to the assistant.
 3. **Optional: switch to Story mode** — Settings → General → App Mode, then drag a TavernCardV2 PNG/JSON onto the sidebar, use Characters → Import, or create a character from scratch.
 
@@ -156,17 +152,15 @@ Settings → Data → **Import Data Folder**: select an existing OpenChat data f
 
 ## FAQ
 
-**Which provider should I start with?** OpenRouter — one key gives you hundreds of models (including some free ones), a live searchable model list, and a credit-balance display. If you'd rather not use any cloud service, install [Ollama](https://ollama.ai) and chat with local models for free.
+**Which provider should I start with?** OpenRouter — one key gives you hundreds of models (including some free ones), a live searchable model list, and a credit-balance display. [NanoGPT](https://nano-gpt.com) is a similar one-key aggregator if you prefer it.
 
 **What does OpenChat cost?** The app is free and open source. Cloud providers bill you directly for what you use through your own API key; nothing goes through us.
 
 **Is my chat data private?** Everything is stored on your machine (see [Data Storage](#data-storage)). Messages are sent only to the provider you configured, and API keys are encrypted at rest where the OS supports it. See the Local-first bullet above for the two other network calls the app makes.
 
-**Can I use it offline?** Yes — with Ollama or any local OpenAI-compatible server. Cloud providers need a connection.
-
 **How do I move to a new machine?** Copy your data folder over, then Settings → Data → Import Data Folder. API keys are not part of the import (they're encrypted per-machine) — re-enter them once.
 
-**Connection problems?** Use Settings → API → Test Connection. For Ollama, make sure `ollama serve` is running. For custom servers, the base URL should be the `/v1`-style root (e.g. `http://localhost:1234/v1`).
+**Connection problems?** Use Settings → API → Test Connection — it verifies your key with a tiny request and reports the exact provider error if one comes back.
 
 ## Keyboard Shortcuts
 

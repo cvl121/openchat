@@ -706,15 +706,6 @@ export function renderChat({ scrollBottom = false } = {}) {
         el('button', { class: 'btn btn-primary btn-small', onclick: () => cb.openSettings?.('api') }, t('chat.openSettings'))
       )
     );
-  } else if (PROVIDERS[config.provider].requiresBaseURL && !config.baseURL) {
-    root.append(
-      el(
-        'div',
-        { class: 'notice-banner' },
-        el('span', {}, t('chat.setURLBanner')),
-        el('button', { class: 'btn btn-primary btn-small', onclick: () => cb.openSettings?.('api') }, t('chat.openSettings'))
-      )
-    );
   }
 
   const messagesEl = el('div', { id: 'messages' });
@@ -1327,11 +1318,6 @@ async function generateResponse({
 
   if (PROVIDERS[config.provider].requiresKey && !config.apiKey) {
     setNotice(charName, chat.file, { error: t('chat.noKeyError', { label: PROVIDERS[config.provider].label }) });
-    if (foreground()) renderChat();
-    return;
-  }
-  if (PROVIDERS[config.provider].requiresBaseURL && !config.baseURL) {
-    setNotice(charName, chat.file, { error: t('chat.noURLError') });
     if (foreground()) renderChat();
     return;
   }
