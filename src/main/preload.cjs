@@ -4,7 +4,9 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 async function invoke(channel, ...args) {
   const result = await ipcRenderer.invoke(channel, ...args);
   if (result && result.ok === false) throw new Error(result.error);
-  return result?.data ?? result;
+  // `data` may legitimately be null (e.g. updates:check when up to date) —
+  // never fall back to returning the { ok, data } wrapper itself.
+  return result && result.ok === true ? result.data : result;
 }
 
 const PUSH_CHANNELS = ['llm:chunk', 'llm:done', 'llm:error', 'llm:image', 'menu:newChat', 'menu:newCharacter', 'menu:settings', 'menu:search', 'menu:history', 'menu:regenerate', 'updates:available'];
