@@ -515,6 +515,11 @@ export const ja = {
   // --- Update banner ------------------------------------------------------
   'updates.available': 'OpenChat {version} が利用可能です',
   'updates.viewRelease': 'リリースを見る',
+  'updates.downloadInstall': 'ダウンロードしてインストール',
+  'updates.downloading': '更新をダウンロード中… {percent}%',
+  'updates.readyToInstall': '更新のダウンロードが完了しました — 再起動で適用されます。',
+  'updates.restartNow': '今すぐ再起動',
+  'updates.downloadFailed': '更新のダウンロードに失敗しました: {msg}',
   'updates.skipVersion': 'このバージョンをスキップ',
   'whatsnew.title': 'OpenChat の新機能',
   'whatsnew.version': 'バージョン {version}',
@@ -559,6 +564,7 @@ export const ja = {
   'errors.unrecognizedCard': '認識できないキャラクターカード形式です',
   'errors.noSTData': 'SillyTavern のデータが見つかりません。SillyTavern フォルダ、その data フォルダ、または data 内のユーザーフォルダ（characters/、chats/、worlds/ を含む）を選択してください。',
   'errors.updateCheckFailed': 'アップデートの確認に失敗しました（HTTP {status}）',
+  'errors.noUpdatePending': 'ダウンロード可能な更新はありません',
   'errors.pathNotMinted': 'パスがファイルダイアログまたはドラッグ&ドロップで選択されていません',
   'errors.httpOnly': '開けるのは http(s) のURLのみです',
 };

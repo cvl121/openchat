@@ -8,6 +8,7 @@ import * as storage from './storage.js';
 import * as stImport from './stImport.js';
 import * as llm from './llm.js';
 import { checkForUpdate } from './updates.js';
+import * as autoUpdate from './autoUpdate.js';
 import { t } from '../shared/i18n.js';
 
 const activeRequests = new Map(); // requestId -> AbortController
@@ -280,4 +281,15 @@ export function registerIPC() {
   // Manual update check (Settings → General). Deliberately ignores the
   // skipped version — an explicit check should always report what's newest.
   ipcMain.handle('updates:check', wrap(() => checkForUpdate({ currentVersion: app.getVersion() })));
+
+  // In-app update: download streams `updates:progress` percentages, install
+  // quits and applies. `supported` is false when running unpackaged or from
+  // a .deb — the banner links to the release page instead.
+  ipcMain.handle('updates:supported', wrap(() => autoUpdate.isSupported()));
+  ipcMain.handle('updates:download', wrap(() =>
+    autoUpdate.downloadUpdate((percent) =>
+      BrowserWindow.getAllWindows()[0]?.webContents.send('updates:progress', percent)
+    )
+  ));
+  ipcMain.handle('updates:install', wrap(() => autoUpdate.installUpdate()));
 }

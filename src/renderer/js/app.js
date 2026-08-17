@@ -323,13 +323,47 @@ async function maybeShowWhatsNew() {
   );
 }
 
-function showUpdateBanner({ version, url }) {
+async function showUpdateBanner({ version, url }) {
   document.getElementById('update-banner')?.remove();
+  // Unpackaged runs and .deb installs can't self-update — link the release
+  const supported = await window.tavern.updates.supported().catch(() => false);
+  const status = el('span', { id: 'update-banner-status' }, t('updates.available', { version }));
+  const viewBtn = () =>
+    el('button', { class: 'btn btn-primary', onclick: () => window.tavern.misc.openExternal(url) }, t('updates.viewRelease'));
+  const actions = el('span', {});
+  if (supported) {
+    const downloadBtn = el('button', { class: 'btn btn-primary' }, t('updates.downloadInstall'));
+    downloadBtn.addEventListener('click', async () => {
+      downloadBtn.disabled = true;
+      status.textContent = t('updates.downloading', { percent: 0 });
+      const offProgress = window.tavern.on('updates:progress', (percent) => {
+        status.textContent = t('updates.downloading', { percent });
+      });
+      try {
+        await window.tavern.updates.download();
+        status.textContent = t('updates.readyToInstall');
+        clear(actions);
+        actions.append(
+          el('button', { class: 'btn btn-primary', onclick: () => window.tavern.updates.install() }, t('updates.restartNow'))
+        );
+      } catch (err) {
+        // Fall back to the release page so a broken feed never strands the user
+        status.textContent = t('updates.downloadFailed', { msg: err.message });
+        clear(actions);
+        actions.append(viewBtn());
+      } finally {
+        offProgress();
+      }
+    });
+    actions.append(downloadBtn);
+  } else {
+    actions.append(viewBtn());
+  }
   const banner = el(
     'div',
     { id: 'update-banner', class: 'update-banner' },
-    el('span', {}, t('updates.available', { version })),
-    el('button', { class: 'btn btn-primary', onclick: () => window.tavern.misc.openExternal(url) }, t('updates.viewRelease')),
+    status,
+    actions,
     el('button', {
       class: 'btn',
       onclick: () => {

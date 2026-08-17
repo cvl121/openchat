@@ -515,6 +515,11 @@ export const es = {
   // --- Update banner ------------------------------------------------------
   'updates.available': 'OpenChat {version} está disponible',
   'updates.viewRelease': 'Ver la versión',
+  'updates.downloadInstall': 'Descargar e instalar',
+  'updates.downloading': 'Descargando actualización… {percent}%',
+  'updates.readyToInstall': 'Actualización descargada — reinicia para aplicarla.',
+  'updates.restartNow': 'Reiniciar ahora',
+  'updates.downloadFailed': 'Error al descargar la actualización: {msg}',
   'updates.skipVersion': 'Omitir esta versión',
   'whatsnew.title': 'Novedades de OpenChat',
   'whatsnew.version': 'Versión {version}',
@@ -559,6 +564,7 @@ export const es = {
   'errors.unrecognizedCard': 'Formato de tarjeta de personaje no reconocido',
   'errors.noSTData': 'No se encontraron datos de SillyTavern. Elige la carpeta de SillyTavern, su carpeta data o una carpeta de usuario dentro de data (que contenga characters/, chats/, worlds/).',
   'errors.updateCheckFailed': 'Error al buscar actualizaciones (HTTP {status})',
+  'errors.noUpdatePending': 'No hay ninguna actualización disponible para descargar',
   'errors.pathNotMinted': 'La ruta no se seleccionó mediante un diálogo de archivos ni arrastrando y soltando',
   'errors.httpOnly': 'Solo se pueden abrir URLs http(s)',
 };

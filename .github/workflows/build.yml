@@ -70,6 +70,8 @@ jobs:
             dist/*.exe
             dist/*.AppImage
             dist/*.deb
+            dist/latest*.yml
+            dist/*.blockmap
 
   # macOS signing runs in its own job bound to the release-signing
   # environment: the Developer ID secrets live there (not repo-wide), and the
@@ -116,3 +118,5 @@ jobs:
           files: |
             dist/*.dmg
             dist/*.zip
+            dist/latest*.yml
+            dist/*.blockmap

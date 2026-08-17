@@ -515,6 +515,11 @@ export const zhCN = {
   // --- Update banner ------------------------------------------------------
   'updates.available': 'OpenChat {version} 已发布',
   'updates.viewRelease': '查看发布说明',
+  'updates.downloadInstall': '下载并安装',
+  'updates.downloading': '正在下载更新… {percent}%',
+  'updates.readyToInstall': '更新已下载 — 重启后生效。',
+  'updates.restartNow': '立即重启',
+  'updates.downloadFailed': '更新下载失败：{msg}',
   'updates.skipVersion': '跳过此版本',
   'whatsnew.title': 'OpenChat 新功能',
   'whatsnew.version': '版本 {version}',
@@ -559,6 +564,7 @@ export const zhCN = {
   'errors.unrecognizedCard': '无法识别的角色卡格式',
   'errors.noSTData': '未找到 SillyTavern 数据。请选择 SillyTavern 文件夹、其 data 文件夹，或 data 内的用户文件夹（包含 characters/、chats/、worlds/）。',
   'errors.updateCheckFailed': '更新检查失败（HTTP {status}）',
+  'errors.noUpdatePending': '没有可下载的更新',
   'errors.pathNotMinted': '路径未通过文件对话框或拖放选择',
   'errors.httpOnly': '只能打开 http(s) URL',
 };

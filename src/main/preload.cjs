@@ -9,7 +9,7 @@ async function invoke(channel, ...args) {
   return result && result.ok === true ? result.data : result;
 }
 
-const PUSH_CHANNELS = ['llm:chunk', 'llm:done', 'llm:error', 'llm:image', 'menu:newChat', 'menu:newCharacter', 'menu:settings', 'menu:search', 'menu:history', 'menu:regenerate', 'updates:available'];
+const PUSH_CHANNELS = ['llm:chunk', 'llm:done', 'llm:error', 'llm:image', 'menu:newChat', 'menu:newCharacter', 'menu:settings', 'menu:search', 'menu:history', 'menu:regenerate', 'updates:available', 'updates:progress'];
 
 contextBridge.exposeInMainWorld('tavern', {
   settings: {
@@ -90,6 +90,9 @@ contextBridge.exposeInMainWorld('tavern', {
   },
   updates: {
     check: () => invoke('updates:check'),
+    supported: () => invoke('updates:supported'),
+    download: () => invoke('updates:download'),
+    install: () => invoke('updates:install'),
   },
   i18n: {
     // Keep the main process (menu, error messages) on the renderer's locale
