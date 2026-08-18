@@ -58,7 +58,7 @@ export const en = {
   'sidebar.exportJSON': 'Export as JSON',
   'sidebar.characterExported': 'Character exported',
   'sidebar.characterDeleted': 'Character deleted',
-  'sidebar.deleteCharacterConfirm': 'Delete "{name}"? Chat history files are kept on disk.',
+  'sidebar.deleteCharacterConfirm': 'Delete "{name}"? Its chat history is archived on disk.',
   'sidebar.imported': 'Imported {name}',
 
   // --- Chat view ---------------------------------------------------------

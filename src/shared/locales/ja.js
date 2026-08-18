@@ -58,7 +58,7 @@ export const ja = {
   'sidebar.exportJSON': 'JSONとしてエクスポート',
   'sidebar.characterExported': 'キャラクターをエクスポートしました',
   'sidebar.characterDeleted': 'キャラクターを削除しました',
-  'sidebar.deleteCharacterConfirm': '「{name}」を削除しますか？チャット履歴ファイルはディスクに残ります。',
+  'sidebar.deleteCharacterConfirm': '「{name}」を削除しますか？チャット履歴はアーカイブとしてディスクに残ります。',
   'sidebar.imported': '{name} をインポートしました',
 
   // --- Chat view ---------------------------------------------------------

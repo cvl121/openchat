@@ -13,9 +13,26 @@ export function avatar(url, name, size = 36) {
       alt: name ?? '',
     });
     img.addEventListener('error', () => img.replaceWith(initialsAvatar(name, size)));
+    img.addEventListener('load', () => {
+      // Characters created without a picture carry a 1×1 placeholder PNG —
+      // show a neutral silhouette instead of a blank circle
+      if (img.naturalWidth < 8) img.replaceWith(placeholderAvatar(size));
+    });
     return img;
   }
   return initialsAvatar(name, size);
+}
+
+/** Greyed-out person silhouette for characters with no real image. */
+function placeholderAvatar(size) {
+  const div = el('div', {
+    class: 'avatar-placeholder',
+    style: { width: `${size}px`, height: `${size}px` },
+  });
+  div.innerHTML =
+    '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+    '<path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>';
+  return div;
 }
 
 function initialsAvatar(name, size) {

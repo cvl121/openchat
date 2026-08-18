@@ -361,9 +361,39 @@ function migrateChats(oldName, newName) {
 }
 
 export async function deleteCharacter(filename) {
-  await removeFile(path.join(charactersDir(), sanitizeFilename(filename)));
-  // Keep chat history on disk: chats live in their own dirs, independent of the card
+  const full = path.join(charactersDir(), sanitizeFilename(filename));
+  // Chats are keyed by character name — read it before the card goes away
+  let name = null;
+  try {
+    name = parseCharacterCard(fs.readFileSync(full)).data.name;
+  } catch {}
+  await removeFile(full);
+  // Archive the chat folder: history stays on disk, but a future character
+  // with the same name starts fresh instead of inheriting it. Skipped when
+  // another card still uses the name (they share the folder).
+  if (name && !listCharacters().some((c) => c.card.data.name === name)) {
+    try {
+      archiveChats(name);
+    } catch {}
+  }
   return true;
+}
+
+/**
+ * Move a deleted character's chat folder into chats/_archived. Search and
+ * session restore only scan one level below chats/, so archived history is
+ * kept on disk without showing up anywhere in the app.
+ */
+function archiveChats(characterName) {
+  const dir = chatsDirFor(characterName);
+  if (!fs.existsSync(dir)) return;
+  const archiveRoot = path.join(dataDir(), 'chats', '_archived');
+  fs.mkdirSync(archiveRoot, { recursive: true });
+  const base = sanitizeFilename(`${characterName} (deleted ${chatTimestamp()})`);
+  let dest = path.join(archiveRoot, base);
+  let i = 2;
+  while (fs.existsSync(dest)) dest = path.join(archiveRoot, `${base} ${i++}`);
+  fs.renameSync(dir, dest);
 }
 
 export function exportCharacter(filename, destPath) {

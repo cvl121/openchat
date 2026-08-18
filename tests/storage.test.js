@@ -115,6 +115,32 @@ test('characters: save, list, unique filenames, delete', () => {
   assert.equal(listCharacters().length, 1);
 });
 
+test('characters: deleting a character archives its chats away from a future namesake', async () => {
+  const { filename } = saveCharacter({ name: 'Ghost' });
+  const chat = createChat('Ghost', 'User');
+  appendMessage('Ghost', chat.file, { name: 'User', is_user: true, mes: 'old history', send_date: '2026-01-01' });
+  assert.equal(listChats('Ghost').length, 1);
+
+  await deleteCharacter(filename);
+  assert.ok(!fs.existsSync(path.join(tmp, 'chats', 'Ghost')));
+  const archived = fs.readdirSync(path.join(tmp, 'chats', '_archived'));
+  assert.equal(archived.filter((d) => d.startsWith('Ghost (deleted ')).length, 1);
+
+  // A new character with the same name starts with no history
+  saveCharacter({ name: 'Ghost' });
+  assert.equal(listChats('Ghost').length, 0);
+  // The archive is invisible to search and cross-character scans
+  assert.equal(searchChats('old history').length, 0);
+});
+
+test('characters: chats survive deletion while a same-name card remains', async () => {
+  saveCharacter({ name: 'Twin' });
+  const { filename: dupe } = saveCharacter({ name: 'Twin' });
+  createChat('Twin', 'User');
+  await deleteCharacter(dupe);
+  assert.equal(listChats('Twin').length, 1);
+});
+
 test('chats: create, append, rewrite, list, search', () => {
   const chat = createChat('Hero', 'User');
   assert.equal(chat.metadata.character_name, 'Hero');

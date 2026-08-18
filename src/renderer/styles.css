@@ -231,6 +231,16 @@ input[type='checkbox'] {
   font-weight: 700;
   flex-shrink: 0;
 }
+/* Character has no real image: greyed-out silhouette */
+.avatar-placeholder {
+  border-radius: 50%;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text-faint);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.avatar-placeholder svg { width: 58%; height: 58%; }
 
 #sidebar-nav {
   border-top: 1px solid var(--border);

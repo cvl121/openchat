@@ -58,7 +58,7 @@ export const zhCN = {
   'sidebar.exportJSON': '导出为 JSON',
   'sidebar.characterExported': '角色已导出',
   'sidebar.characterDeleted': '角色已删除',
-  'sidebar.deleteCharacterConfirm': '删除“{name}”？聊天记录文件仍保留在磁盘上。',
+  'sidebar.deleteCharacterConfirm': '删除“{name}”？其聊天记录将归档保留在磁盘上。',
   'sidebar.imported': '已导入 {name}',
 
   // --- Chat view ---------------------------------------------------------

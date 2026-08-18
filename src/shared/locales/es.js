@@ -58,7 +58,7 @@ export const es = {
   'sidebar.exportJSON': 'Exportar como JSON',
   'sidebar.characterExported': 'Personaje exportado',
   'sidebar.characterDeleted': 'Personaje eliminado',
-  'sidebar.deleteCharacterConfirm': '¿Eliminar «{name}»? Los archivos del historial de chat se conservan en el disco.',
+  'sidebar.deleteCharacterConfirm': '¿Eliminar «{name}»? Su historial de chat se archiva en el disco.',
   'sidebar.imported': 'Se importó {name}',
 
   // --- Chat view ---------------------------------------------------------
