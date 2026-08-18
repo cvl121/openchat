@@ -22,7 +22,7 @@ import {
   knownModelContext,
   rememberModelPricing,
 } from '../state.js';
-import { sliderRow, checkboxRow, textRow, textareaRow, selectRow } from '../components.js';
+import { sliderRow, checkboxRow, textRow, textareaRow, selectRow, combobox } from '../components.js';
 import { t, LOCALES, LOCALE_LABELS } from '../../../shared/i18n.js';
 
 let cb = {}; // { applyAppearance, reloadAll, renderSidebar }
@@ -106,15 +106,16 @@ async function fetchModels(config, { force = false } = {}) {
   return models;
 }
 
-function fillModelDatalist(datalist, models) {
-  clear(datalist);
-  for (const m of models) {
+/** Model list → combobox items, matching the chat model switcher's rows. */
+function comboItems(models) {
+  return models.map((m) => {
     const parts = [];
+    if (m.name && m.name !== m.id) parts.push(m.name);
     if (m.context) parts.push(`${m.context.toLocaleString()} ctx`);
     const price = formatModelPricing(m.pricing);
     if (price) parts.push(price);
-    datalist.append(el('option', { value: m.id }, parts.length ? `${m.name} (${parts.join(' · ')})` : m.name));
-  }
+    return { value: m.id, sub: parts.join(' · ') };
+  });
 }
 
 function renderAPI() {
@@ -176,13 +177,6 @@ function renderAPI() {
   }
 
   // Model picker — the list loads automatically once a key is present
-  const modelInput = el('input', {
-    type: 'text',
-    value: s.models?.[s.activeAPI] || provider.defaultModel,
-    list: 'model-list',
-    placeholder: t('settings.modelID'),
-  });
-  const datalist = el('datalist', { id: 'model-list' });
   let listedModels = []; // last fetched list, to cache the picked model's context
   const rememberPicked = () => {
     const picked = listedModels.find((m) => m.id === (s.models?.[s.activeAPI] ?? '').trim());
@@ -191,11 +185,16 @@ function renderAPI() {
       if (picked.pricing) rememberModelPricing(s.activeAPI, picked.id, picked.pricing);
     }
   };
-  modelInput.addEventListener('input', () => {
-    s.models = s.models ?? {};
-    s.models[s.activeAPI] = modelInput.value.trim();
-    scheduleSettingsSave();
-    rememberPicked();
+  const modelCombo = combobox({
+    value: s.models?.[s.activeAPI] || provider.defaultModel,
+    placeholder: t('settings.modelID'),
+    emptyText: t('chat.noMatchingModels'),
+    onChange: (v) => {
+      s.models = s.models ?? {};
+      s.models[s.activeAPI] = v.trim();
+      scheduleSettingsSave();
+      rememberPicked();
+    },
   });
   const refreshBtn = el('button', { class: 'btn' }, t('settings.refreshList'));
   const modelHint = el('div', { class: 'hint' }, '');
@@ -203,7 +202,7 @@ function renderAPI() {
     try {
       const models = await fetchModels(apiConfig(), { force });
       listedModels = models;
-      fillModelDatalist(datalist, models);
+      modelCombo.setItems(comboItems(models));
       rememberPicked();
       modelHint.textContent = t('settings.modelsAvailable', { count: models.length });
       modelHint.style.color = '';
@@ -228,8 +227,7 @@ function renderAPI() {
   root.append(
     el('div', { class: 'form-row' },
       el('label', {}, t('settings.model')),
-      el('div', { class: 'form-inline' }, modelInput, refreshBtn),
-      datalist,
+      el('div', { class: 'form-inline' }, modelCombo.root, refreshBtn),
       modelHint
     )
   );
@@ -347,13 +345,6 @@ function renderImageGen(s) {
     })
   );
 
-  const modelInput = el('input', {
-    type: 'text',
-    value: s.imageGen.model ?? '',
-    list: 'image-model-list',
-    placeholder: 'e.g. google/gemini-3.1-flash-image',
-  });
-  const datalist = el('datalist', { id: 'image-model-list' });
   const hint = el('div', { class: 'hint' }, t('settings.imageModelHint'));
   // A typo here (e.g. "gemini-3.1-image" instead of "google/gemini-3.1-flash-image")
   // only surfaces as a provider error mid-chat — warn right where it can be fixed.
@@ -366,10 +357,15 @@ function renderImageGen(s) {
         ? t('settings.imageModelWarn', { value, label: PROVIDERS[imageProvider].label, example: imageModelIds[0] })
         : baseHint;
   };
-  modelInput.addEventListener('input', () => {
-    s.imageGen.model = modelInput.value.trim();
-    scheduleSettingsSave();
-    refreshHint();
+  const modelCombo = combobox({
+    value: s.imageGen.model ?? '',
+    placeholder: 'e.g. google/gemini-3.1-flash-image',
+    emptyText: t('chat.noMatchingModels'),
+    onChange: (v) => {
+      s.imageGen.model = v.trim();
+      scheduleSettingsSave();
+      refreshHint();
+    },
   });
   if (!PROVIDERS[imageProvider].requiresKey || s.apiKeys[imageProvider]) {
     fetchModels({
@@ -379,7 +375,7 @@ function renderImageGen(s) {
     })
       .then((models) => {
         const imageModels = models.filter((m) => m.imageOutput);
-        fillModelDatalist(datalist, imageModels.length ? imageModels : models);
+        modelCombo.setItems(comboItems(imageModels.length ? imageModels : models));
         imageModelIds = imageModels.map((m) => m.id);
         baseHint = imageModels.length
           ? t('settings.imageModelsAvailable', { count: imageModels.length })
@@ -388,7 +384,7 @@ function renderImageGen(s) {
       })
       .catch(() => {});
   }
-  group.append(el('div', { class: 'form-row' }, el('label', {}, t('settings.imageModel')), modelInput, datalist, hint));
+  group.append(el('div', { class: 'form-row' }, el('label', {}, t('settings.imageModel')), modelCombo.root, hint));
   return group;
 }
 

@@ -1,6 +1,6 @@
 // Shared UI widgets.
 
-import { el } from './util.js';
+import { el, clear } from './util.js';
 
 /** Avatar image with fallback to colored initials. */
 export function avatar(url, name, size = 36) {
@@ -111,6 +111,123 @@ export function selectRow(label, { options, get, set, hint }) {
     select,
     hint ? el('div', { class: 'hint' }, hint) : null
   );
+}
+
+/**
+ * Text input with a styled, scrollable suggestion menu — an in-app
+ * replacement for <input list> + <datalist>, whose native popup can't be
+ * themed and handles long model lists poorly. Items: { value, sub? }.
+ * The menu opens on focus, filters on every space-separated term as you
+ * type, and supports ArrowUp/Down, Enter, and Escape.
+ * Returns { root, input, setItems }.
+ */
+export function combobox({ value = '', placeholder = '', emptyText = '', onChange }) {
+  const input = el('input', { type: 'text', value, placeholder, autocomplete: 'off', spellcheck: 'false' });
+  const menu = el('div', { class: 'combo-menu', hidden: true });
+  const root = el('div', { class: 'combo' }, input, menu);
+  let items = [];
+  let rows = [];
+  let matches = [];
+  let hilite = -1;
+  let open = false;
+  let lastQuery = '';
+
+  const close = () => {
+    open = false;
+    menu.hidden = true;
+  };
+  const setHilite = (i, scroll = true) => {
+    rows[hilite]?.classList.remove('hilite');
+    hilite = i;
+    if (hilite >= 0) {
+      rows[hilite].classList.add('hilite');
+      if (scroll) rows[hilite].scrollIntoView({ block: 'nearest' });
+    }
+  };
+  const pick = (v) => {
+    input.value = v;
+    onChange?.(v);
+    close();
+  };
+  // Opening shows the full list (query '') so the current value never
+  // filters everything else out; typing then narrows it down.
+  const renderMenu = (query) => {
+    lastQuery = query;
+    clear(menu);
+    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    matches = items.filter((it) => {
+      const hay = `${it.value} ${it.sub ?? ''}`.toLowerCase();
+      return terms.every((term) => hay.includes(term));
+    });
+    hilite = -1;
+    rows = matches.map((it) => {
+      const row = el(
+        'div',
+        { class: 'combo-item' },
+        el('div', { class: 'combo-title' }, it.value),
+        it.sub ? el('div', { class: 'combo-sub' }, it.sub) : null
+      );
+      // preventDefault keeps the input focused so blur doesn't kill the click
+      row.addEventListener('pointerdown', (e) => e.preventDefault());
+      row.addEventListener('click', () => pick(it.value));
+      return row;
+    });
+    if (rows.length) menu.append(...rows);
+    else menu.append(el('div', { class: 'combo-empty' }, emptyText));
+  };
+  const openMenu = () => {
+    if (!items.length) return; // nothing to browse (yet) — no menu, no false "no matches"
+    open = true;
+    menu.hidden = false;
+    renderMenu('');
+    // Start at the current value so the list opens "where you are"
+    const current = matches.findIndex((it) => it.value === input.value.trim());
+    if (current >= 0) setHilite(current);
+  };
+
+  input.addEventListener('focus', openMenu);
+  input.addEventListener('click', () => {
+    if (!open) openMenu();
+  });
+  input.addEventListener('blur', close);
+  input.addEventListener('input', () => {
+    onChange?.(input.value);
+    if (!items.length) return;
+    open = true;
+    menu.hidden = false;
+    renderMenu(input.value);
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!open) return openMenu();
+      if (!matches.length) return;
+      const delta = e.key === 'ArrowDown' ? 1 : -1;
+      setHilite((hilite + delta + matches.length) % matches.length);
+    } else if (e.key === 'Enter') {
+      if (open && hilite >= 0) {
+        e.preventDefault();
+        pick(matches[hilite].value);
+      }
+    } else if (e.key === 'Escape') {
+      if (open) {
+        e.stopPropagation();
+        close();
+      }
+    }
+  });
+
+  return {
+    root,
+    input,
+    setItems(list) {
+      items = list;
+      if (open) renderMenu(lastQuery);
+      // List arrived while the field was focused (e.g. models finished
+      // loading after a click) — open now instead of requiring a re-click
+      else if (document.activeElement === input) openMenu();
+    },
+  };
 }
 
 export function streamingDots() {
