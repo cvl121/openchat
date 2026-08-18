@@ -9,6 +9,35 @@ import { compareVersions } from './version.js';
 
 export const WHATS_NEW = [
   {
+    version: '0.9.4',
+    items: {
+      en: [
+        'The model pickers in Settings now open a proper in-app list — click to browse every model or type to search, with context sizes and pricing, and smooth scrolling even through hundreds of models.',
+        'Deleting a character now archives its chat history on disk (chats/_archived), so a new character with the same name starts fresh instead of inheriting old chats.',
+        'Characters without a picture now show a grey silhouette instead of a blank circle.',
+        'UI polish: icon buttons, toolbars, and the chat input bar now line up evenly across the app.',
+      ],
+      es: [
+        'Los selectores de modelo en Ajustes ahora abren una lista propia de la app — haz clic para explorar todos los modelos o escribe para buscar, con tamaños de contexto y precios, y desplazamiento fluido incluso con cientos de modelos.',
+        'Eliminar un personaje ahora archiva su historial de chat en el disco (chats/_archived), así que un personaje nuevo con el mismo nombre empieza de cero en vez de heredar chats antiguos.',
+        'Los personajes sin imagen ahora muestran una silueta gris en lugar de un círculo vacío.',
+        'Pulido de la interfaz: los botones de icono, las barras de herramientas y la barra de entrada del chat ahora quedan alineados en toda la app.',
+      ],
+      'zh-CN': [
+        '设置中的模型选择器现在使用应用内置列表 — 点击浏览全部模型或输入搜索，显示上下文大小和价格，即使有数百个模型也能流畅滚动。',
+        '删除角色时会将其聊天记录归档到磁盘（chats/_archived），因此同名的新角色将从零开始，而不会继承旧聊天。',
+        '没有图片的角色现在显示灰色剪影，而不是空白圆圈。',
+        '界面打磨：图标按钮、工具栏和聊天输入栏在整个应用中对齐一致。',
+      ],
+      ja: [
+        '設定のモデル選択がアプリ内リストになりました — クリックで全モデルを一覧でき、入力で検索。コンテキストサイズと価格を表示し、数百モデルでもスムーズにスクロールできます。',
+        'キャラクターを削除すると、チャット履歴はディスク上にアーカイブされます（chats/_archived）。同じ名前の新しいキャラクターは、古いチャットを引き継がずまっさらな状態で始まります。',
+        '画像のないキャラクターは、空白の円ではなくグレーのシルエットで表示されるようになりました。',
+        'UI の仕上げ: アイコンボタン、ツールバー、チャット入力欄がアプリ全体で揃うようになりました。',
+      ],
+    },
+  },
+  {
     version: '0.9.3',
     items: {
       en: [
