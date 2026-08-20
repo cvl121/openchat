@@ -9,6 +9,39 @@ import { compareVersions } from './version.js';
 
 export const WHATS_NEW = [
   {
+    version: '0.9.5',
+    items: {
+      en: [
+        'Long chats are now faster and cheaper: prompts are arranged so providers can cache your character card and lore between turns — automatic for most models, with explicit caching for Claude (including via OpenRouter).',
+        'World lore got smarter: entries keep triggering from the compressed-chat summary, stay active a few turns after their keywords scroll away (new per-entry Sticky setting), and a new “Match whole words” option stops look-alike keywords from firing mid-word.',
+        'Real costs: token counts and dollar amounts now come straight from the provider when reported — including cached-token discounts — instead of estimates. Hover a message’s timestamp to see them.',
+        'Chat compression now also triggers by conversation size (not just message count), runs for conversations that finish in the background, and keeps structured notes on facts, characters, and open plot threads.',
+        'Claude and Gemini now receive author’s notes, reminders, and post-history instructions near the end of the prompt — where they belong — instead of buried at the top.',
+      ],
+      es: [
+        'Los chats largos ahora son más rápidos y baratos: los prompts se organizan para que los proveedores puedan cachear tu tarjeta de personaje y el lore entre turnos — automático para la mayoría de modelos, con caché explícita para Claude (incluso vía OpenRouter).',
+        'El lore del mundo es más inteligente: las entradas siguen activándose desde el resumen del chat comprimido, permanecen activas unos turnos después de que sus palabras clave desaparezcan (nuevo ajuste Persistencia por entrada), y la nueva opción «Solo palabras completas» evita activaciones dentro de otras palabras.',
+        'Costes reales: los recuentos de tokens y los importes en dólares ahora vienen directamente del proveedor cuando los informa — incluidos los descuentos por tokens en caché — en lugar de estimaciones. Pasa el cursor sobre la hora de un mensaje para verlos.',
+        'La compresión de chats ahora también se activa por el tamaño de la conversación (no solo por número de mensajes), funciona para conversaciones que terminan en segundo plano y mantiene notas estructuradas de hechos, personajes y tramas abiertas.',
+        'Claude y Gemini ahora reciben las notas de autor, los recordatorios y las instrucciones post-historial cerca del final del prompt — donde corresponde — en lugar de enterrados al principio.',
+      ],
+      'zh-CN': [
+        '长对话更快更省钱：提示词经过重新编排，服务商可以在多轮之间缓存你的角色卡和世界设定 — 大多数模型自动生效，Claude 使用显式缓存（包括通过 OpenRouter）。',
+        '世界设定更智能：条目可以从压缩摘要中继续触发，关键词滚出范围后仍保持激活几轮（每条目新增“延续”设置），新的“仅匹配完整单词”选项可避免相似关键词在单词中间误触发。',
+        '真实费用：token 数量和美元金额现在在服务商报告时直接采用其数据 — 包括缓存 token 折扣 — 而非估算值。将鼠标悬停在消息时间上即可查看。',
+        '聊天压缩现在也会按对话大小触发（不只是消息数量），对在后台完成的对话同样生效，并以结构化笔记保留事实、角色和未完结的情节线索。',
+        'Claude 和 Gemini 现在会在提示词末尾附近收到作者注释、提醒和后置指令 — 在它们应在的位置 — 而不是被埋在开头。',
+      ],
+      ja: [
+        '長いチャットがより速く、より安くなりました。プロンプトの構成を見直し、キャラクターカードやロアをターン間でプロバイダーがキャッシュできるようになりました — 多くのモデルで自動、Claude では明示的キャッシュ（OpenRouter 経由も含む）。',
+        'ワールドロアが賢くなりました。圧縮された要約からもエントリが発動し続け、キーワードが範囲外になっても数ターンは有効なまま（エントリごとの新しい「持続」設定）。新しい「単語単位で一致」オプションで、単語の途中での誤発動を防げます。',
+        '実際のコスト表示: トークン数と金額は、プロバイダーが報告する場合はその値をそのまま使用します — キャッシュトークンの割引も含む — 推定値ではありません。メッセージの時刻にカーソルを合わせると確認できます。',
+        'チャット圧縮は、メッセージ数だけでなく会話のサイズでも発動するようになり、バックグラウンドで完了した会話にも働き、事実・登場人物・未解決の筋書きを構造化されたメモとして保持します。',
+        'Claude と Gemini では、作者ノート・リマインダー・ポストヒストリー指示がプロンプトの末尾近く（本来の位置）に配置されるようになりました。冒頭に埋もれることはもうありません。',
+      ],
+    },
+  },
+  {
     version: '0.9.4',
     items: {
       en: [
