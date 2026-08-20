@@ -200,15 +200,17 @@ export function registerIPC() {
     };
     const onImage = (dataURL) => send('llm:image', { requestId, dataURL });
     let finishReason = null;
+    let usage = null;
     try {
       const full = await llm.sendMessage(messages, config, onChunk, {
         signal: controller.signal,
         onImage,
         onFinishReason: (reason) => (finishReason = reason),
+        onUsage: (u) => (usage = u),
       });
       clearTimeout(flushTimer);
       flushChunks();
-      send('llm:done', { requestId, text: full, finishReason });
+      send('llm:done', { requestId, text: full, finishReason, usage });
       return { ok: true };
     } catch (err) {
       clearTimeout(flushTimer);

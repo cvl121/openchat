@@ -72,12 +72,30 @@ function startMockServer() {
           for (const text of chunks) {
             res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`);
           }
+          // Usage accounting arrives on a trailing content-less chunk
+          // (OpenRouter shape: exact cost + cached-token details)
+          res.write(`data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 12, completion_tokens: 4, cost: 0.00042, prompt_tokens_details: { cached_tokens: 8 } } })}\n\n`);
           res.write('data: [DONE]\n\n');
           res.end();
         } else {
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ choices: [{ message: { content: 'Hello complete' } }] }));
+          res.end(JSON.stringify({ choices: [{ message: { content: 'Hello complete' } }], usage: { prompt_tokens: 12, completion_tokens: 4 } }));
         }
+      } else if (req.url.endsWith('/messages')) {
+        // Anthropic Messages API (non-streaming)
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          content: [{ type: 'text', text: 'Claude says hi' }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 42, output_tokens: 7, cache_read_input_tokens: 100, cache_creation_input_tokens: 10 },
+        }));
+      } else if (req.url.includes(':generateContent')) {
+        // Gemini generateContent (non-streaming)
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          candidates: [{ content: { parts: [{ text: 'Gemini says hi' }] }, finishReason: 'STOP' }],
+          usageMetadata: { promptTokenCount: 30, candidatesTokenCount: 5, cachedContentTokenCount: 20 },
+        }));
       } else {
         res.writeHead(404);
         res.end();
@@ -562,5 +580,140 @@ test('every provider is hosted, keyed, and covered by fallback models', () => {
     assert.equal(p.requiresKey, true);
     assert.ok(FALLBACK_MODELS[provider].length > 0, `no fallback models for ${provider}`);
     assert.ok(FALLBACK_MODELS[provider].includes(p.defaultModel), `default model of ${provider} missing from fallbacks`);
+  }
+});
+
+test('openrouter asks for usage accounting and reports it via onUsage', async () => {
+  const server = await startMockServer();
+  try {
+    let usage = null;
+    await sendMessage([{ role: 'user', content: 'hi' }], config(server), () => {}, {
+      onUsage: (u) => (usage = u),
+    });
+    assert.deepEqual(server.lastRequest.body.usage, { include: true });
+    assert.deepEqual(usage, { inTokens: 12, outTokens: 4, cachedTokens: 8, costUSD: 0.00042 });
+  } finally {
+    server.close();
+  }
+});
+
+test('non-streaming responses also report usage', async () => {
+  const server = await startMockServer();
+  try {
+    const cfg = config(server);
+    cfg.params.stream_response = false;
+    let usage = null;
+    await sendMessage([{ role: 'user', content: 'hi' }], cfg, null, { onUsage: (u) => (usage = u) });
+    // No cache/cost fields in this payload → the optional keys are absent
+    assert.deepEqual(usage, { inTokens: 12, outTokens: 4 });
+  } finally {
+    server.close();
+  }
+});
+
+test('anthropic models via openrouter get a cache_control breakpoint on the leading system message', async () => {
+  const server = await startMockServer();
+  try {
+    const messages = [
+      { role: 'system', content: 'CARD' },
+      { role: 'user', content: 'hi' },
+    ];
+    await sendMessage(messages, config(server, { model: 'anthropic/claude-sonnet-4-6' }), () => {});
+    assert.deepEqual(server.lastRequest.body.messages[0], {
+      role: 'system',
+      content: [{ type: 'text', text: 'CARD', cache_control: { type: 'ephemeral' } }],
+    });
+    // Non-Anthropic models keep plain string content (implicit caching)
+    await sendMessage(messages, config(server, { model: 'openai/gpt-4o' }), () => {});
+    assert.equal(server.lastRequest.body.messages[0].content, 'CARD');
+  } finally {
+    server.close();
+  }
+});
+
+test('openai streams request usage via stream_options; aggregators do not', async () => {
+  const server = await startMockServer();
+  try {
+    await sendMessage([{ role: 'user', content: 'hi' }], config(server, { provider: 'openai' }), () => {});
+    assert.deepEqual(server.lastRequest.body.stream_options, { include_usage: true });
+    await sendMessage([{ role: 'user', content: 'hi' }], config(server), () => {});
+    assert.equal(server.lastRequest.body.stream_options, undefined);
+    assert.equal(server.lastRequest.body.usage.include, true);
+  } finally {
+    server.close();
+  }
+});
+
+test('claude: leading system cached, later system messages keep their position as user turns', async () => {
+  const server = await startMockServer();
+  try {
+    const cfg = config(server, { provider: 'claude', model: 'claude-sonnet-5' });
+    cfg.params.stream_response = false;
+    let usage = null;
+    const text = await sendMessage(
+      [
+        { role: 'system', content: 'CARD' },
+        { role: 'system', content: 'PERSONA' },
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: 'hello' },
+        { role: 'system', content: 'SUMMARY' },
+        { role: 'user', content: 'go on' },
+        { role: 'system', content: 'REMINDER' },
+      ],
+      cfg,
+      null,
+      { onUsage: (u) => (usage = u) }
+    );
+    assert.equal(text, 'Claude says hi');
+    const body = server.lastRequest.body;
+    // The leading run of system messages is hoisted with a cache breakpoint
+    assert.deepEqual(body.system, [
+      { type: 'text', text: 'CARD\n\nPERSONA', cache_control: { type: 'ephemeral' } },
+    ]);
+    // Later system entries ride inline as user turns, merged with neighbors
+    assert.deepEqual(
+      body.messages.map((m) => [m.role, m.content.map((b) => b.text).join('|')]),
+      [
+        ['user', 'hi'],
+        ['assistant', 'hello'],
+        ['user', 'SUMMARY\n\ngo on\n\nREMINDER'],
+      ]
+    );
+    // Anthropic's input_tokens excludes cache reads/writes — inTokens sums all three
+    assert.deepEqual(usage, { inTokens: 152, outTokens: 7, cachedTokens: 100, cacheWriteTokens: 10 });
+  } finally {
+    server.close();
+  }
+});
+
+test('gemini: later system messages stay positional as user turns', async () => {
+  const server = await startMockServer();
+  try {
+    const cfg = config(server, { provider: 'gemini', model: 'test-model' });
+    cfg.params.stream_response = false;
+    let usage = null;
+    const text = await sendMessage(
+      [
+        { role: 'system', content: 'CARD' },
+        { role: 'user', content: 'hi' },
+        { role: 'system', content: 'NOTE' },
+      ],
+      cfg,
+      null,
+      { onUsage: (u) => (usage = u) }
+    );
+    assert.equal(text, 'Gemini says hi');
+    const body = server.lastRequest.body;
+    assert.deepEqual(body.systemInstruction, { parts: [{ text: 'CARD' }] });
+    assert.deepEqual(
+      body.contents.map((c) => [c.role, c.parts[0].text]),
+      [
+        ['user', 'hi'],
+        ['user', 'NOTE'],
+      ]
+    );
+    assert.deepEqual(usage, { inTokens: 30, outTokens: 5, cachedTokens: 20 });
+  } finally {
+    server.close();
   }
 });

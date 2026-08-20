@@ -61,7 +61,12 @@ test('failed image turns (bare "<image>" placeholders) are dropped from the prom
   assert.deepEqual(imageTurn.images, ['data:image/png;base64,AAAA']);
 });
 
-test('world info: constant always included, keyword entries only when triggered', () => {
+/** The keyword-triggered lore system message, or undefined. */
+function loreMessage(messages) {
+  return messages.find((m) => m.role === 'system' && m.content.startsWith('Relevant world information:'));
+}
+
+test('world info: constant in the leading prompt, keyword entries in a separate message when triggered', () => {
   const worldInfoEntries = [
     { keys: ['dragon'], content: 'Dragons are red.', constant: false, enabled: true },
     { keys: [], content: 'The kingdom is old.', constant: true, enabled: true },
@@ -74,7 +79,7 @@ test('world info: constant always included, keyword entries only when triggered'
     worldInfoEntries,
   });
   assert.match(without[0].content, /The kingdom is old\./);
-  assert.doesNotMatch(without[0].content, /Dragons are red\./);
+  assert.equal(loreMessage(without), undefined);
 
   const withTrigger = buildMessages({
     character,
@@ -82,8 +87,10 @@ test('world info: constant always included, keyword entries only when triggered'
     userName: 'Bob',
     worldInfoEntries,
   });
-  assert.match(withTrigger[0].content, /Dragons are red\./);
-  assert.doesNotMatch(withTrigger[0].content, /Disabled lore\./);
+  // Triggered lore stays out of the leading system message (stable prefix)
+  assert.doesNotMatch(withTrigger[0].content, /Dragons are red\./);
+  assert.match(loreMessage(withTrigger).content, /Dragons are red\./);
+  assert.doesNotMatch(loreMessage(withTrigger).content, /Disabled lore\./);
 });
 
 test('character book entries trigger from recent messages', () => {
@@ -102,8 +109,55 @@ test('character book entries trigger from recent messages', () => {
     chatHistory: [{ is_user: true, mes: 'Where is the sword?' }],
     userName: 'Bob',
   });
-  assert.match(messages[0].content, /The sword glows blue\./);
   assert.match(messages[0].content, /Always present lore\./);
+  assert.match(loreMessage(messages).content, /The sword glows blue\./);
+});
+
+test('trigger flicker leaves the leading system message byte-identical (prompt caching)', () => {
+  const worldInfoEntries = [
+    { keys: ['dragon'], content: 'Dragons are red.', constant: false, enabled: true },
+    { keys: [], content: 'The kingdom is old.', constant: true, enabled: true },
+  ];
+  const quiet = buildMessages({
+    character,
+    chatHistory: [{ is_user: true, mes: 'Nice weather' }],
+    userName: 'Bob',
+    worldInfoEntries,
+  });
+  const triggered = buildMessages({
+    character,
+    chatHistory: [{ is_user: true, mes: 'A dragon appears!' }],
+    userName: 'Bob',
+    worldInfoEntries,
+  });
+  assert.equal(quiet[0].content, triggered[0].content);
+});
+
+test('lore keywords in the compression summary keep triggering after history is compressed', () => {
+  const worldInfoEntries = [
+    { keys: ['dragon'], content: 'Dragons are red.', constant: false, enabled: true },
+  ];
+  const charWithBook = {
+    ...character,
+    character_book: {
+      entries: [{ keys: ['Ravenholm'], content: 'Ravenholm is cursed.', enabled: true, constant: false }],
+    },
+  };
+  const messages = buildMessages({
+    character: charWithBook,
+    chatHistory: [{ is_user: true, mes: 'Let us keep going.' }],
+    userName: 'Bob',
+    worldInfoEntries,
+    summary: 'Bob fought the dragon and set out for Ravenholm.',
+  });
+  const lore = loreMessage(messages);
+  assert.match(lore.content, /Dragons are red\./);
+  assert.match(lore.content, /Ravenholm is cursed\./);
+  // Placed after the summary and before the remaining history
+  const summaryIdx = messages.findIndex((m) => m.content.includes('older messages were compressed'));
+  const loreIdx = messages.indexOf(lore);
+  const historyIdx = messages.findIndex((m) => m.content === 'Let us keep going.');
+  assert.ok(summaryIdx < loreIdx && loreIdx < historyIdx);
 });
 
 test('reminder prompt injected before post-history instructions', () => {
@@ -321,7 +375,7 @@ test('selective world entries require both a primary and a secondary key', () =>
     userName: 'Bob',
     worldInfoEntries: [entry],
   });
-  assert.doesNotMatch(primaryOnly[0].content, /dragon sleeps/);
+  assert.equal(loreMessage(primaryOnly), undefined);
 
   const both = buildMessages({
     character,
@@ -329,7 +383,7 @@ test('selective world entries require both a primary and a secondary key', () =>
     userName: 'Bob',
     worldInfoEntries: [entry],
   });
-  assert.match(both[0].content, /dragon sleeps/);
+  assert.match(loreMessage(both).content, /dragon sleeps/);
 
   // Non-selective entries ignore secondary keys entirely
   const nonSelective = buildMessages({
@@ -338,5 +392,176 @@ test('selective world entries require both a primary and a secondary key', () =>
     userName: 'Bob',
     worldInfoEntries: [{ ...entry, selective: false }],
   });
-  assert.match(nonSelective[0].content, /dragon sleeps/);
+  assert.match(loreMessage(nonSelective).content, /dragon sleeps/);
+});
+
+test('sticky keeps a triggered entry active after its keyword leaves the scan window', () => {
+  // 10 messages; "dragon" is 7th from the end — outside scan_depth 5, inside 5+sticky(2)
+  const history = Array.from({ length: 10 }, (_, i) => ({
+    is_user: i % 2 === 0,
+    mes: i === 3 ? 'A dragon roars in the distance' : `message ${i}`,
+  }));
+  const bookOf = (sticky) => ({
+    ...character,
+    character_book: {
+      scan_depth: 5,
+      entries: [{ keys: ['dragon'], content: 'Dragons are red.', enabled: true, constant: false, ...(sticky != null ? { sticky } : {}) }],
+    },
+  });
+  const withDefault = buildMessages({ character: bookOf(null), chatHistory: history, userName: 'Bob' });
+  assert.match(loreMessage(withDefault).content, /Dragons are red\./);
+  // sticky 0 disables the hysteresis: same keyword position no longer triggers
+  const withZero = buildMessages({ character: bookOf(0), chatHistory: history, userName: 'Bob' });
+  assert.equal(loreMessage(withZero), undefined);
+  // beyond scan_depth + sticky the entry deactivates even with the default
+  const farHistory = history.map((m, i) => (i === 3 ? { ...m, mes: 'message 3' } : m));
+  farHistory[1].mes = 'A dragon roars in the distance'; // 9th from the end
+  const tooFar = buildMessages({ character: bookOf(null), chatHistory: farHistory, userName: 'Bob' });
+  assert.equal(loreMessage(tooFar), undefined);
+});
+
+test('triggered lore is capped at a share of the context; oversize entries are skipped, smaller ones still fit', () => {
+  const worldInfoEntries = [
+    { keys: ['dragon'], content: 'A'.repeat(240), constant: false, enabled: true, insertion_order: 1 }, // ~60 tokens
+    { keys: ['dragon'], content: 'B'.repeat(240), constant: false, enabled: true, insertion_order: 2 }, // ~60 tokens — over budget
+    { keys: ['dragon'], content: 'C'.repeat(80), constant: false, enabled: true, insertion_order: 3 }, // ~20 tokens — fits the remainder
+  ];
+  const stats = {};
+  const messages = buildMessages({
+    character,
+    chatHistory: [{ is_user: true, mes: 'the dragon lands' }],
+    userName: 'Bob',
+    worldInfoEntries,
+    contextSize: 400, // lore budget: 100 tokens
+    stats,
+  });
+  const lore = loreMessage(messages);
+  assert.match(lore.content, /AAAA/);
+  assert.doesNotMatch(lore.content, /BBBB/);
+  assert.match(lore.content, /CCCC/);
+  assert.equal(stats.loreDropped, 1);
+  // Without a context size there is no budget
+  const unbounded = {};
+  const all = buildMessages({
+    character,
+    chatHistory: [{ is_user: true, mes: 'the dragon lands' }],
+    userName: 'Bob',
+    worldInfoEntries,
+    stats: unbounded,
+  });
+  assert.match(loreMessage(all).content, /BBBB/);
+  assert.equal(unbounded.loreDropped, 0);
+});
+
+test('attached images count toward the trim budget', () => {
+  const assistantCard = {
+    name: 'Assistant', description: '', personality: '', scenario: '', first_mes: '',
+    mes_example: '', system_prompt: '', post_history_instructions: '',
+  };
+  const chatHistory = [
+    { is_user: true, mes: 'x'.repeat(400) }, // ~100 tokens
+    { is_user: true, mes: 'look at this', _attachments: [{ kind: 'image', dataURL: 'data:image/png;base64,AA' }] },
+  ];
+  const stats = {};
+  buildMessages({
+    character: assistantCard,
+    chatHistory,
+    userName: 'Bob',
+    systemPromptOverride: 'sys',
+    contextSize: 1100, // image (~1000) + newest text leaves no room for the older message
+    stats,
+  });
+  assert.equal(stats.trimmedCount, 1);
+  // The same history fits easily when the image is not charged for
+  const noImage = {};
+  buildMessages({
+    character: assistantCard,
+    chatHistory: [chatHistory[0], { is_user: true, mes: 'look at this' }],
+    userName: 'Bob',
+    systemPromptOverride: 'sys',
+    contextSize: 1100,
+    stats: noImage,
+  });
+  assert.equal(noImage.trimmedCount, 0);
+});
+
+test('overflowTokens reports when fixed parts plus the newest message cannot fit', () => {
+  const stats = {};
+  buildMessages({
+    character,
+    chatHistory: [{ is_user: true, mes: 'hello' }],
+    userName: 'Bob',
+    contextSize: 30, // far below the card's own size
+    stats,
+  });
+  assert.ok(stats.overflowTokens > 0);
+  assert.equal(stats.trimmedCount, 0); // the newest message is still kept
+
+  const fine = {};
+  buildMessages({
+    character,
+    chatHistory: [{ is_user: true, mes: 'hello' }],
+    userName: 'Bob',
+    contextSize: 4096,
+    stats: fine,
+  });
+  assert.equal(fine.overflowTokens, 0);
+});
+
+test('match_whole_words: no substring false-positives, substring stays the default', () => {
+  const entry = { keys: ['art'], content: 'Art lore.', constant: false, enabled: true, match_whole_words: true };
+  // "start" contains "art" but is not the word
+  const noHit = buildMessages({
+    character,
+    chatHistory: [{ is_user: true, mes: 'Let us start the journey' }],
+    userName: 'Bob',
+    worldInfoEntries: [entry],
+  });
+  assert.equal(loreMessage(noHit), undefined);
+  // The bare word (case-folded) triggers, punctuation-adjacent included
+  const hit = buildMessages({
+    character,
+    chatHistory: [{ is_user: true, mes: 'I love modern ART.' }],
+    userName: 'Bob',
+    worldInfoEntries: [entry],
+  });
+  assert.match(loreMessage(hit).content, /Art lore\./);
+  // Default (flag off) keeps substring semantics — plurals still match
+  const plural = buildMessages({
+    character,
+    chatHistory: [{ is_user: true, mes: 'Three cats sleep here' }],
+    userName: 'Bob',
+    worldInfoEntries: [{ keys: ['cat'], content: 'Cat lore.', constant: false, enabled: true }],
+  });
+  assert.match(loreMessage(plural).content, /Cat lore\./);
+});
+
+test('match_whole_words falls back to substring for CJK keys and honors extensions on character books', () => {
+  // \b is meaningless next to CJK — the key still matches inside a longer run
+  const cjk = buildMessages({
+    character,
+    chatHistory: [{ is_user: true, mes: 'あの魔法使いは強い' }],
+    userName: 'Bob',
+    worldInfoEntries: [{ keys: ['魔法'], content: 'Magic lore.', constant: false, enabled: true, match_whole_words: true }],
+  });
+  assert.match(loreMessage(cjk).content, /Magic lore\./);
+  // Embedded character books carry the flag under extensions (ST card format)
+  const charWithBook = {
+    ...character,
+    character_book: {
+      entries: [{ keys: ['art'], content: 'Book art lore.', enabled: true, constant: false, extensions: { match_whole_words: true } }],
+    },
+  };
+  const noHit = buildMessages({
+    character: charWithBook,
+    chatHistory: [{ is_user: true, mes: 'the start of it all' }],
+    userName: 'Bob',
+  });
+  assert.equal(loreMessage(noHit), undefined);
+  const hit = buildMessages({
+    character: charWithBook,
+    chatHistory: [{ is_user: true, mes: 'what fine art!' }],
+    userName: 'Bob',
+  });
+  assert.match(loreMessage(hit).content, /Book art lore\./);
 });

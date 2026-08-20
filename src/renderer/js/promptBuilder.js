@@ -1,18 +1,58 @@
 // Assembles character card data, world info, and chat history into an LLM
 // messages array. Assembly order:
 //   system prompt → description → personality → scenario → persona →
-//   character book entries → world info → few-shot examples → chat history →
+//   constant lore (character book + world info) → few-shot examples →
+//   summary → keyword-triggered lore → chat history →
 //   reminder prompt → post-history instructions
+//
+// Constant lore lives in the leading system message; keyword-triggered lore
+// gets its own system message after the summary. Keeping the per-turn-variable
+// parts out of the leading message leaves a byte-identical prefix across
+// turns, which is what provider prompt caching keys on — and it puts the
+// triggered lore closer to the live conversation, where models weight it more.
 
 import { replaceTemplateVars, estimateTokens } from './util.js';
 import { isImagePlaceholder } from './imageFlow.js';
 
+// Extra turns a triggered lore entry stays active after its keywords scroll
+// out of scan range (per-entry `sticky` overrides). Hysteresis keeps mid-scene
+// lore from vanishing the moment its keyword ages out, and stabilizes the
+// prompt across turns for provider caching.
+const DEFAULT_STICKY = 2;
+// Triggered lore may fill at most this share of the context window; overflow
+// is dropped lowest-priority-first so lore can never crowd out live history.
+const LORE_BUDGET_FRACTION = 0.25;
+// Rough per-image token cost — attached images are far from free, and
+// counting them as zero lets multimodal prompts overflow the window.
+export const IMAGE_TOKENS = 1000;
+
+/** Prompt cost of one message: text plus any attached images. */
+function tokensOf(m) {
+  return estimateTokens(m.content) + (m.images?.length ?? 0) * IMAGE_TOKENS;
+}
+
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Whole-word regex for a keyword. \b is only meaningful next to ASCII word
+ * characters, so it is applied per edge — keys with CJK or punctuation edges
+ * fall back to plain substring matching on that edge (a fully-CJK key
+ * degrades to exact substring, which is the right behavior for CJK).
+ */
+function wordRe(needle) {
+  const lead = /^[A-Za-z0-9_]/.test(needle) ? '\\b' : '';
+  const trail = /[A-Za-z0-9_]$/.test(needle) ? '\\b' : '';
+  return new RegExp(lead + escapeRe(needle) + trail);
+}
+
 function keywordMatches(entry, recentText) {
   const caseSensitive = entry.case_sensitive ?? false;
+  const whole = (entry.match_whole_words ?? entry.extensions?.match_whole_words) === true;
   const haystack = caseSensitive ? recentText : recentText.toLowerCase();
   const hit = (key) => {
     const needle = caseSensitive ? key : key.toLowerCase();
-    return needle && haystack.includes(needle);
+    if (!needle) return false;
+    return whole ? wordRe(needle).test(haystack) : haystack.includes(needle);
   };
   if (!(entry.keys ?? []).some(hit)) return false;
   // Selective entries (SillyTavern) additionally require a secondary keyword
@@ -26,8 +66,10 @@ function keywordMatches(entry, recentText) {
 /**
  * Build the full message array for an LLM API call.
  * When contextSize > 0, oldest history messages are dropped so the prompt
- * plus the model's response fits the context window (rough chars/4 estimate).
- * Pass a `stats` object to receive { promptTokens, trimmedCount }.
+ * plus the model's response fits the context window (rough chars/4 estimate),
+ * and triggered lore competes under a budget (LORE_BUDGET_FRACTION).
+ * Pass a `stats` object to receive
+ * { promptTokens, trimmedCount, loreDropped, overflowTokens }.
  * @returns [{role: 'system'|'user'|'assistant', content}]
  */
 export function buildMessages({
@@ -66,39 +108,56 @@ export function buildMessages({
     systemContent += `\n\n${userName}'s description: ${persona.description}`;
   }
 
-  // 6. Character book (embedded lore): constant entries + keyword-triggered
+  // Keyword scans read the recent messages plus the compression summary —
+  // entities that only appear by name in compressed history are still live
+  // conversation state, so their lore must keep triggering.
+  const scanCache = new Map();
+  const scanText = (depth) => {
+    if (!scanCache.has(depth)) {
+      scanCache.set(
+        depth,
+        (summary ? `${summary} ` : '') +
+          chatHistory
+            .slice(-depth)
+            .map((m) => m.mes ?? '')
+            .join(' ')
+      );
+    }
+    return scanCache.get(depth);
+  };
+  // Sticky widens the scan window per entry: a keyword last seen up to
+  // `sticky` messages beyond the base depth still keeps the entry active.
+  const scanDepthFor = (entry, base) =>
+    base + Math.max(0, entry.sticky ?? entry.extensions?.sticky ?? DEFAULT_STICKY);
+  const triggeredLore = [];
+
+  // 6. Character book (embedded lore): constant entries stay in the leading
+  // system message; keyword-triggered ones are collected for later injection.
   const book = character.character_book;
   if (book?.entries?.length) {
-    const scanDepth = book.scan_depth ?? 10;
-    const recentText = chatHistory
-      .slice(-scanDepth)
-      .map((m) => m.mes ?? '')
-      .join(' ');
+    const baseDepth = book.scan_depth ?? 10;
     const entries = [...book.entries].sort(
       (a, b) => (a.insertion_order ?? 100) - (b.insertion_order ?? 100)
     );
     for (const entry of entries) {
       if (entry.enabled === false) continue;
-      if (entry.constant || keywordMatches(entry, recentText)) {
-        systemContent += `\n\n${vars(entry.content)}`;
+      if (entry.constant) systemContent += `\n\n${vars(entry.content)}`;
+      else if (keywordMatches(entry, scanText(scanDepthFor(entry, baseDepth)))) {
+        triggeredLore.push(vars(entry.content));
       }
     }
   }
 
-  // 7–8. World info: constant entries, then keyword-triggered (scan last 10 messages)
-  const recentText = chatHistory
-    .slice(-10)
-    .map((m) => m.mes ?? '')
-    .join(' ');
+  // 7–8. World info: same split — constant entries here, triggered ones collected
   const enabled = worldInfoEntries.filter((e) => e.enabled !== false);
   const byOrder = (a, b) => (a.insertion_order ?? 100) - (b.insertion_order ?? 100);
   for (const entry of enabled.filter((e) => e.constant).sort(byOrder)) {
     systemContent += `\n\n${vars(entry.content)}`;
   }
   for (const entry of enabled
-    .filter((e) => !e.constant && keywordMatches(e, recentText))
+    .filter((e) => !e.constant && keywordMatches(e, scanText(scanDepthFor(e, 10))))
     .sort(byOrder)) {
-    systemContent += `\n\n${vars(entry.content)}`;
+    triggeredLore.push(vars(entry.content));
   }
 
   messages.push({ role: 'system', content: systemContent });
@@ -115,6 +174,35 @@ export function buildMessages({
       role: 'system',
       content: `Summary of the conversation so far (older messages were compressed to save context):\n${vars(summary)}`,
     });
+  }
+
+  // 9c. Keyword-triggered lore, after the summary (which changes rarely) and
+  // right before the history it relates to. Capped at a share of the context
+  // window: entries are admitted in insertion order (character book first),
+  // and one that doesn't fit is skipped so smaller lower-priority entries can
+  // still use the remaining budget.
+  let loreDropped = 0;
+  if (triggeredLore.length) {
+    let keptLore = triggeredLore;
+    if (contextSize > 0) {
+      let loreBudget = Math.floor(contextSize * LORE_BUDGET_FRACTION);
+      keptLore = [];
+      for (const content of triggeredLore) {
+        const cost = estimateTokens(content);
+        if (cost > loreBudget) {
+          loreDropped++;
+          continue;
+        }
+        loreBudget -= cost;
+        keptLore.push(content);
+      }
+    }
+    if (keptLore.length) {
+      messages.push({
+        role: 'system',
+        content: `Relevant world information:\n\n${keptLore.join('\n\n')}`,
+      });
+    }
   }
 
   // 10–11. Chat history (skip system/meta messages), trimmed to the context
@@ -149,22 +237,26 @@ export function buildMessages({
   const note = authorsNote ? vars(authorsNote) : '';
   const postInstructions = vars(character.post_history_instructions);
   let trimmedCount = 0;
+  let overflowTokens = 0;
   if (contextSize > 0) {
     const fixedTokens =
-      messages.reduce((sum, m) => sum + estimateTokens(m.content), 0) +
+      messages.reduce((sum, m) => sum + tokensOf(m), 0) +
       estimateTokens(reminder) +
       estimateTokens(note) +
       estimateTokens(postInstructions);
     let budget = contextSize - maxResponseTokens - fixedTokens;
     const kept = [];
     for (let i = history.length - 1; i >= 0; i--) {
-      const cost = estimateTokens(history[i].content);
+      const cost = tokensOf(history[i]);
       if (kept.length && budget < cost) break;
       budget -= cost;
       kept.unshift(history[i]);
     }
     trimmedCount = history.length - kept.length;
     history = kept;
+    // Negative leftover means the fixed parts plus the newest message alone
+    // exceed the window — the request will likely be rejected or truncated.
+    if (budget < 0) overflowTokens = -budget;
   }
   messages.push(...history);
 
@@ -185,7 +277,9 @@ export function buildMessages({
   }
 
   stats.trimmedCount = trimmedCount;
-  stats.promptTokens = messages.reduce((sum, m) => sum + estimateTokens(m.content), 0);
+  stats.loreDropped = loreDropped;
+  stats.overflowTokens = overflowTokens;
+  stats.promptTokens = messages.reduce((sum, m) => sum + tokensOf(m), 0);
   return messages;
 }
 

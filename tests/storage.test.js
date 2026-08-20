@@ -341,12 +341,17 @@ test('world info: selective flag normalizes and export writes ST format', () => 
         enabled: false,
         insertion_order: 7,
       },
+      // ST-style field name aliases normalize on read
+      { keys: ['knight'], content: 'A knight.', matchWholeWords: true },
     ],
     global: false,
   });
   const book = listWorldInfo().find((b) => b.name === 'Exportia');
   assert.equal(book.entries[0].selective, true);
   assert.deepEqual(book.entries[0].secondary_keys, ['red']);
+  assert.equal(book.entries[0].sticky, 2); // default when absent
+  assert.equal(book.entries[0].match_whole_words, false); // default when absent
+  assert.equal(book.entries[1].match_whole_words, true);
 
   const dest = path.join(tmp, 'exportia-st.json');
   exportWorldInfo(saved.file, dest);
@@ -356,6 +361,9 @@ test('world info: selective flag normalizes and export writes ST format', () => 
   assert.equal(st.entries['0'].selective, true);
   assert.equal(st.entries['0'].disable, true);
   assert.equal(st.entries['0'].order, 7);
+  assert.equal(st.entries['0'].sticky, 2);
+  assert.equal(st.entries['0'].matchWholeWords, false);
+  assert.equal(st.entries['1'].matchWholeWords, true);
 });
 
 test('settings: chat mode is the default app mode', () => {

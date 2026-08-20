@@ -214,7 +214,9 @@ export function newLoreEntry() {
     constant: false,
     enabled: true,
     case_sensitive: false,
+    match_whole_words: false,
     insertion_order: 100,
+    sticky: 2,
   };
 }
 
@@ -226,6 +228,9 @@ export function loreEntryCard(entry, onDelete) {
 
   const orderInput = el('input', { type: 'number', value: String(entry.insertion_order ?? 100), style: { width: '70px' } });
   orderInput.addEventListener('change', () => (entry.insertion_order = parseInt(orderInput.value, 10) || 0));
+
+  const stickyInput = el('input', { type: 'number', min: '0', value: String(entry.sticky ?? 2), style: { width: '55px' } });
+  stickyInput.addEventListener('change', () => (entry.sticky = Math.max(0, parseInt(stickyInput.value, 10) || 0)));
 
   return el('div', { class: 'card' },
     textRow(t('worlds.keywords'), {
@@ -244,12 +249,18 @@ export function loreEntryCard(entry, onDelete) {
       inlineCheck(t('worlds.constant'), () => !!entry.constant, (v) => (entry.constant = v)),
       inlineCheck(t('worlds.enabled'), () => entry.enabled !== false, (v) => (entry.enabled = v)),
       inlineCheck(t('worlds.caseSensitive'), () => !!entry.case_sensitive, (v) => (entry.case_sensitive = v)),
+      inlineCheck(t('worlds.matchWholeWords'), () => !!entry.match_whole_words, (v) => (entry.match_whole_words = v)),
       selective,
       el('label', {
         class: 'form-inline',
         style: { fontSize: '12px' },
         title: t('worlds.orderTitle'),
       }, t('worlds.order'), orderInput),
+      el('label', {
+        class: 'form-inline',
+        style: { fontSize: '12px' },
+        title: t('worlds.stickyTitle'),
+      }, t('worlds.sticky'), stickyInput),
       el('button', {
         class: 'btn-icon',
         style: { marginLeft: 'auto' },

@@ -230,6 +230,25 @@ function openAICompatibleBody(messages, config, stream) {
   if (config.requestImages && config.provider === 'openrouter') {
     body.modalities = ['image', 'text'];
   }
+  if (config.provider === 'openrouter') {
+    // Exact token accounting rides on the final chunk (free; replaces the
+    // chars/4 estimate in cost display)
+    body.usage = { include: true };
+    // Anthropic models only cache the prompt prefix at an explicit breakpoint,
+    // which OpenRouter passes through; other vendors cache prefixes implicitly.
+    // The leading system message is the stable block by construction (see
+    // promptBuilder.js), so mark its end.
+    if (/^anthropic\//.test(config.model)) {
+      const first = body.messages[0];
+      if (first?.role === 'system' && typeof first.content === 'string') {
+        first.content = [{ type: 'text', text: first.content, cache_control: { type: 'ephemeral' } }];
+      }
+    }
+  }
+  // OpenAI streams omit usage unless asked (non-streaming always reports it)
+  if (config.provider === 'openai' && stream) {
+    body.stream_options = { include_usage: true };
+  }
   return body;
 }
 
@@ -261,8 +280,17 @@ function buildRequest(messages, config, stream) {
       };
 
     case 'claude': {
-      // Anthropic: system messages go in a top-level field; turns must alternate
-      const system = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
+      // Anthropic: only the leading run of system messages goes in the
+      // top-level field. Later system-role entries (summary, triggered lore,
+      // author's note, reminder, post-history) are positional — hoisting them
+      // to the top would defeat their placement — so they ride inline as user
+      // turns instead (the Messages API allows no system role in messages).
+      let leading = 0;
+      while (leading < messages.length && messages[leading].role === 'system') leading++;
+      const system = messages.slice(0, leading).map((m) => m.content).join('\n\n');
+      const inline = messages
+        .slice(leading)
+        .map((m) => (m.role === 'system' ? { ...m, role: 'user' } : m));
       const blocksOf = (m) => [
         ...(m.images ?? [])
           .map(parseDataURL)
@@ -271,8 +299,7 @@ function buildRequest(messages, config, stream) {
         ...(m.content ? [{ type: 'text', text: m.content }] : []),
       ];
       const turns = [];
-      for (const m of messages) {
-        if (m.role === 'system') continue;
+      for (const m of inline) {
         const blocks = blocksOf(m);
         if (!blocks.length) continue;
         const last = turns[turns.length - 1];
@@ -297,7 +324,10 @@ function buildRequest(messages, config, stream) {
         messages: turns,
         stream,
       };
-      if (system) body.system = system;
+      // Cache the stable prefix: below the model's minimum cacheable length
+      // the marker is a no-op, above it every following turn reads the card,
+      // persona, and constant lore at the cached-token rate.
+      if (system) body.system = [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }];
       if (p.top_p < 1.0) body.top_p = p.top_p;
       if (p.top_k > 0) body.top_k = p.top_k;
       if (p.stop_sequences?.length) body.stop_sequences = p.stop_sequences;
@@ -313,9 +343,14 @@ function buildRequest(messages, config, stream) {
     }
 
     case 'gemini': {
-      const system = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
+      // Same leading-run split as Claude: positional system entries stay in
+      // place as user turns, and the stable systemInstruction + prefix earns
+      // Gemini's implicit prompt caching.
+      let leading = 0;
+      while (leading < messages.length && messages[leading].role === 'system') leading++;
+      const system = messages.slice(0, leading).map((m) => m.content).join('\n\n');
       const contents = messages
-        .filter((m) => m.role !== 'system')
+        .slice(leading)
         .map((m) => ({
           role: m.role === 'assistant' ? 'model' : 'user',
           parts: [
@@ -393,6 +428,63 @@ function extractFinishReason(provider, json) {
       return json.candidates?.[0]?.finishReason ?? null;
     default:
       return json.choices?.[0]?.finish_reason ?? null;
+  }
+}
+
+/**
+ * Token usage in a streamed or complete payload, normalized to
+ * {inTokens?, outTokens?, cachedTokens?, cacheWriteTokens?, costUSD?}.
+ * inTokens is the TOTAL prompt size on every provider; cachedTokens (reads)
+ * and cacheWriteTokens are subsets billed at discounted/premium rates, and
+ * costUSD is the provider's own exact charge when it reports one (OpenRouter).
+ * Streamed payloads may report the fields across separate events (Claude) or
+ * cumulatively per chunk (Gemini) — callers merge, so every field is spread
+ * conditionally to never clobber a merged value with undefined.
+ */
+function extractUsage(provider, json) {
+  switch (provider) {
+    case 'claude': {
+      // message_start carries input_tokens; message_delta carries output_tokens.
+      // Anthropic's input_tokens EXCLUDES cache reads/writes — sum them so
+      // inTokens means "total prompt tokens" like everywhere else.
+      const u = json.message?.usage ?? json.usage;
+      if (!u) return null;
+      const cacheRead = u.cache_read_input_tokens;
+      const cacheWrite = u.cache_creation_input_tokens;
+      return {
+        ...(u.input_tokens != null
+          ? { inTokens: u.input_tokens + (cacheRead ?? 0) + (cacheWrite ?? 0) }
+          : {}),
+        ...(u.output_tokens != null ? { outTokens: u.output_tokens } : {}),
+        ...(cacheRead != null ? { cachedTokens: cacheRead } : {}),
+        ...(cacheWrite != null ? { cacheWriteTokens: cacheWrite } : {}),
+      };
+    }
+    case 'gemini': {
+      const u = json.usageMetadata;
+      if (!u) return null;
+      return {
+        inTokens: u.promptTokenCount ?? 0,
+        outTokens: (u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0),
+        // Implicitly-cached subset of promptTokenCount
+        ...(u.cachedContentTokenCount != null ? { cachedTokens: u.cachedContentTokenCount } : {}),
+      };
+    }
+    default: {
+      // OpenAI-compatible: a usage object on the final chunk (or the complete
+      // response). OpenRouter/OpenAI send it when asked via the request body.
+      const u = json.usage;
+      if (!u) return null;
+      return {
+        inTokens: u.prompt_tokens ?? 0,
+        outTokens: u.completion_tokens ?? 0,
+        ...(u.prompt_tokens_details?.cached_tokens != null
+          ? { cachedTokens: u.prompt_tokens_details.cached_tokens }
+          : {}),
+        // OpenRouter reports the exact charge in USD
+        ...(typeof u.cost === 'number' ? { costUSD: u.cost } : {}),
+      };
+    }
   }
 }
 
@@ -498,15 +590,16 @@ function abortableDelay(ms, signal) {
 
 /**
  * Stream a chat completion. Calls onChunk(text) as tokens arrive,
- * onImage(dataURL) for image outputs (image-capable models), and
+ * onImage(dataURL) for image outputs (image-capable models),
  * onFinishReason(reason) with the provider's stop reason (e.g. 'length'
- * when the response was truncated by the max-tokens limit).
- * Returns the full response text. Abortable via opts.signal.
+ * when the response was truncated by the max-tokens limit), and
+ * onUsage({inTokens, outTokens}) with the provider-reported token counts
+ * when available. Returns the full response text. Abortable via opts.signal.
  *
  * Transient failures (429/5xx/network) are retried with backoff — but never
  * once any content has reached the callbacks, and never on abort.
  */
-export async function sendMessage(messages, config, onChunk, { signal, onImage, onFinishReason } = {}) {
+export async function sendMessage(messages, config, onChunk, { signal, onImage, onFinishReason, onUsage } = {}) {
   const stream = config.params.stream_response !== false;
   const req = buildRequest(messages, config, stream);
   let delivered = false;
@@ -520,6 +613,7 @@ export async function sendMessage(messages, config, onChunk, { signal, onImage, 
       onImage?.(url);
     },
     onFinishReason,
+    onUsage,
   };
   for (let attempt = 0; ; attempt++) {
     try {
@@ -531,7 +625,7 @@ export async function sendMessage(messages, config, onChunk, { signal, onImage, 
   }
 }
 
-async function attemptSend(req, config, stream, { onChunk, onImage, onFinishReason }, signal) {
+async function attemptSend(req, config, stream, { onChunk, onImage, onFinishReason, onUsage }, signal) {
   // A stalled connection would otherwise hang until manual stop: abort if no
   // bytes arrive for STREAM_IDLE_TIMEOUT_MS.
   const idle = new AbortController();
@@ -572,11 +666,14 @@ async function attemptSend(req, config, stream, { onChunk, onImage, onFinishReas
       for (const image of extractImages(config.provider, json)) onImage?.(image);
       const reason = extractFinishReason(config.provider, json);
       if (reason) onFinishReason?.(reason);
+      const usage = extractUsage(config.provider, json);
+      if (usage) onUsage?.(usage);
       return text;
     }
 
     let full = '';
     let finishReason = null;
+    let usage = null;
     for await (const data of sseEvents(response)) {
       resetIdle();
       let json;
@@ -596,8 +693,11 @@ async function attemptSend(req, config, stream, { onChunk, onImage, onFinishReas
       }
       for (const image of extractImages(config.provider, json)) onImage?.(image);
       finishReason = extractFinishReason(config.provider, json) ?? finishReason;
+      const u = extractUsage(config.provider, json);
+      if (u) usage = { ...usage, ...u };
     }
     if (finishReason) onFinishReason?.(finishReason);
+    if (usage) onUsage?.(usage);
     return full;
   } catch (err) {
     if (idledOut) {

@@ -138,9 +138,10 @@ export function initChat(callbacks) {
       });
     }
   });
-  window.tavern.on('llm:done', async ({ requestId, finishReason }) => {
+  window.tavern.on('llm:done', async ({ requestId, finishReason, usage }) => {
     const run = state.runs.get(requestId);
     if (!run) return;
+    if (usage) run.usage = usage; // provider-reported token counts, when available
     setNotice(run.charName, run.file, { finishReason: finishReason ?? null });
     if (LENGTH_REASONS.has(finishReason)) {
       devLog('INFO', `response truncated by max-tokens limit (finish_reason: ${finishReason})`);
@@ -242,17 +243,42 @@ async function finishGeneration(run, { failed = false } = {}) {
     }
   }
   // The cost estimate rides on the message itself, so persisting it costs no
-  // extra writes (the append below carries it). Token counts are estimates;
-  // dollar figures appear only when the model's pricing is known (OpenRouter).
+  // extra writes (the append below carries it). Token counts are exact when
+  // the provider reported usage, chars/4 estimates otherwise. Dollars come
+  // from the provider's own charge when reported (OpenRouter), else from
+  // reference pricing with approximate cache discounts.
   if (!failed && msg && chat.messages.includes(msg) && msg.mes.trim() && state.settings.showCostEstimates) {
-    const outTokens = estimateTokens(msg.mes);
+    const usage = run.usage ?? {};
+    const inTokens = usage.inTokens ?? run.promptTokens ?? 0;
+    const outTokens = usage.outTokens ?? estimateTokens(msg.mes);
+    const cached = usage.cachedTokens ?? 0;
+    const cacheWrite = usage.cacheWriteTokens ?? 0;
     const pricing = knownModelPricing(run.provider, run.model);
+    let usd;
+    let exact = false;
+    if (usage.costUSD != null) {
+      usd = usage.costUSD;
+      exact = true;
+    } else if (pricing) {
+      // Approximate cache rates vs. the base input price: Anthropic reads
+      // 0.1× / writes 1.25×, OpenAI cached 0.5×, Gemini cached 0.25×
+      const readMult = { claude: 0.1, openai: 0.5, gemini: 0.25 }[run.provider] ?? 1;
+      const writeMult = run.provider === 'claude' ? 1.25 : 1;
+      const freshIn = Math.max(0, inTokens - cached - cacheWrite);
+      usd =
+        ((freshIn + cached * readMult + cacheWrite * writeMult) * pricing.inPerM +
+          outTokens * pricing.outPerM) /
+        1e6;
+    }
     msg.extra = msg.extra ?? {};
     msg.extra.cost = {
       model: run.model,
-      inTokens: run.promptTokens ?? 0,
+      inTokens,
       outTokens,
-      ...(pricing ? { usd: ((run.promptTokens ?? 0) * pricing.inPerM + outTokens * pricing.outPerM) / 1e6 } : {}),
+      ...(cached ? { cachedTokens: cached } : {}),
+      ...(cacheWrite ? { cacheWriteTokens: cacheWrite } : {}),
+      ...(usd != null ? { usd } : {}),
+      ...(exact ? { exact: true } : {}),
     };
   }
   // Persist with the run's own refs — the chat may be backgrounded by now.
@@ -272,10 +298,10 @@ async function finishGeneration(run, { failed = false } = {}) {
   }
   if (isChatMode()) await refreshConversations(); // re-renders the sidebar
   else cb.renderSidebar?.();
-  if (onScreen) {
-    renderChat();
-    void maybeCompressChat(); // background; re-renders when done
-  }
+  if (onScreen) renderChat();
+  // Compress backgrounded conversations too — long chats are then already
+  // compact when the user returns. Re-renders only if the chat is on-screen.
+  void maybeCompressChat(chat, run.charName);
   if (!failed) void maybeAutoTitle(run); // background; renames when done
 }
 
@@ -327,16 +353,28 @@ async function maybeAutoTitle(run) {
 // resending the full history.
 
 const COMPRESS_KEEP_RECENT = 16; // newest messages always sent verbatim
+const COMPRESS_CONTEXT_FRACTION = 0.5; // also compress when history outgrows this share of the context
 let compressing = false;
 
-async function maybeCompressChat() {
+async function maybeCompressChat(chat, charName) {
   const cfg = state.settings.chatCompression;
-  if (!cfg?.enabled || compressing || isCurrentChatGenerating()) return;
-  const chat = state.currentChat;
-  if (!chat || !state.selectedCharacter) return;
+  if (!cfg?.enabled || compressing || !chat || !charName) return;
+  if (runForChat(chat)) return; // never race the chat's own generation
   const threshold = Math.max(20, cfg.afterMessages ?? 60);
   const start = Math.min(chat.metadata.summary?.upToIndex ?? 0, chat.messages.length);
-  if (chat.messages.length - start <= threshold) return;
+  const config = apiConfig(chat.metadata.model);
+  // Message count alone under-triggers on long messages: a handful of big
+  // turns can fill a small context and start silently trimming. Also compress
+  // once the uncompressed history outgrows half the model's context window
+  // (known from the model-list cache; the manual setting is the fallback).
+  const p = config.params;
+  const autoCtx = (p.context_size_auto ?? true) ? knownModelContext(config.provider, config.model) : 0;
+  const contextSize = autoCtx > 0 ? autoCtx : p.context_size;
+  const historyTokens = chat.messages
+    .slice(start)
+    .reduce((sum, m) => sum + estimateTokens(m.mes ?? ''), 0);
+  const overTokenBudget = contextSize > 0 && historyTokens > contextSize * COMPRESS_CONTEXT_FRACTION;
+  if (chat.messages.length - start <= threshold && !overTokenBudget) return;
   const end = chat.messages.length - COMPRESS_KEEP_RECENT;
   if (end <= start) return;
 
@@ -355,17 +393,24 @@ async function maybeCompressChat() {
           `Conversation to summarize:\n\n${transcript}`,
       },
     ];
-    const config = apiConfig(chat.metadata.model);
     config.params.max_tokens = Math.min(1024, config.params.max_tokens || 1024);
-    devLog('INFO', `compressing ${slice.length} older messages (threshold ${threshold})…`);
+    devLog('INFO', `compressing ${slice.length} older messages (${overTokenBudget ? `~${historyTokens} tokens > ${Math.round(COMPRESS_CONTEXT_FRACTION * 100)}% of ${contextSize}-token context` : `threshold ${threshold}`})…`);
     const text = (await window.tavern.llm.complete(request, config))?.trim();
     if (!text) return;
-    if (state.currentChat !== chatRef) return; // user switched chats mid-flight
-    if (runForChat(chatRef)) return; // a generation started meanwhile — don't clobber its rewrite
-    chatRef.metadata.summary = { text, upToIndex: end };
-    await persistChat();
+    // If the user reopened this conversation mid-flight, state.currentChat is
+    // a FRESH object loaded from disk — write the summary to the live object,
+    // not the stale chatRef, or the persist would clobber newer messages.
+    const reopened =
+      state.currentChat !== chatRef &&
+      state.currentChat?.file === chatRef.file &&
+      state.selectedCharacter?.card.data.name === charName;
+    const target = reopened ? state.currentChat : chatRef;
+    if (runForChat(target)) return; // a generation started meanwhile — don't clobber its rewrite
+    if (target.messages.length < end) return; // messages were deleted meanwhile
+    target.metadata.summary = { text, upToIndex: end };
+    await persistChatMetadataFor(charName, target);
     devLog('INFO', `compressed ${end - start} messages into a ~${estimateTokens(text)}-token summary`);
-    if (state.view === 'chat' && !isCurrentChatGenerating()) renderChat();
+    if (target === state.currentChat && state.view === 'chat' && !isCurrentChatGenerating()) renderChat();
   } catch (err) {
     devLog('ERR', `chat compression failed: ${err.message}`);
   } finally {
@@ -1085,7 +1130,12 @@ function messageEl(msg, index) {
               inTokens: msg.extra.cost.inTokens.toLocaleString(),
               outTokens: msg.extra.cost.outTokens.toLocaleString(),
             }) +
-            (msg.extra.cost.usd != null ? ` · ~${formatUSD(msg.extra.cost.usd)}` : '') +
+            (msg.extra.cost.cachedTokens
+              ? ` · ${t('chat.costCachedTooltip', { cached: msg.extra.cost.cachedTokens.toLocaleString() })}`
+              : '') +
+            (msg.extra.cost.usd != null
+              ? ` · ${msg.extra.cost.exact ? '' : '~'}${formatUSD(msg.extra.cost.usd)}`
+              : '') +
             (msg.extra.cost.model ? ` · ${msg.extra.cost.model}` : '')
           : undefined,
       }, formatTime(msg.send_date)),
@@ -1349,6 +1399,12 @@ async function generateResponse({
   });
   const trimmed = stats.trimmedCount ?? 0;
   setNotice(charName, chat.file, { trimmed });
+  if (stats.loreDropped) {
+    devLog('WARN', `${stats.loreDropped} triggered lore entries dropped — over the lore token budget for this ${config.params.context_size}-token context`);
+  }
+  if (stats.overflowTokens) {
+    devLog('WARN', `prompt exceeds the context window by ~${stats.overflowTokens} tokens even after trimming — the card, lore, and newest message alone don't fit`);
+  }
 
   let msg = intoMessage;
   if (!msg) {

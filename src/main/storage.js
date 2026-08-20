@@ -672,8 +672,13 @@ function normalizeWorldEntry(e) {
     selective: !!e.selective,
     enabled: e.enabled ?? (e.disable !== undefined ? !e.disable : true),
     case_sensitive: !!(e.case_sensitive ?? e.caseSensitive),
+    // SillyTavern stores null for "use global" — treated as off here
+    match_whole_words: !!(e.match_whole_words ?? e.matchWholeWords ?? e.extensions?.match_whole_words),
     insertion_order: e.insertion_order ?? e.order ?? 100,
     position: e.position ?? 'before_char',
+    // Extra turns a triggered entry stays active after its keywords leave the
+    // scan window (SillyTavern carries the same field). Default 2.
+    sticky: e.sticky ?? e.extensions?.sticky ?? 2,
   };
 }
 
@@ -725,8 +730,10 @@ export function exportWorldInfo(file, destPath) {
       disable: !e.enabled,
       selective: !!e.selective,
       caseSensitive: e.case_sensitive,
+      matchWholeWords: !!e.match_whole_words,
       order: e.insertion_order,
       position: e.position === 'after_char' || e.position === 1 ? 1 : 0,
+      sticky: e.sticky ?? 2,
     };
   });
   fs.writeFileSync(destPath, JSON.stringify({ name: book.name, entries }, null, 2));

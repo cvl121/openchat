@@ -32,10 +32,19 @@ export const ASSISTANT_CHARACTER = {
 export const DEFAULT_CHAT_SYSTEM_PROMPT =
   'You are a helpful assistant. Answer clearly and concisely, using markdown when it helps.';
 
+// Structured sections survive repeated re-folding far better than free prose:
+// each compression pass rewrites the summary, and prose drifts while labeled
+// facts mostly carry over verbatim. Section names also give the lore keyword
+// scan stable text to match against.
 export const DEFAULT_COMPRESSION_PROMPT =
-  'Summarize the conversation so far into a compact brief that preserves every fact, name, decision, ' +
-  'emotional beat, and unresolved thread needed to continue seamlessly. Write a factual summary, not prose. ' +
-  'Keep it under 300 words.';
+  'Compress the conversation into a structured brief for continuing it seamlessly. Use exactly these sections:\n' +
+  'FACTS: established facts about the world and story, one per line.\n' +
+  'CHARACTERS: each named character or person — current state, goals, and relationships.\n' +
+  'THREADS: unresolved plot threads, promises, plans, and open questions.\n' +
+  'SCENE: where the latest messages left off — location, time, who is present, what is happening.\n' +
+  'Carry forward every name, decision, and emotional beat needed for continuity. ' +
+  'When folding in an existing summary, keep its still-relevant lines and update the rest. ' +
+  'No commentary outside the sections. Keep it under 350 words.';
 
 export const state = {
   settings: null,
