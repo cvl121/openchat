@@ -60,11 +60,20 @@ jobs:
       # On version tags (v1.0.0, v1.1.0, ...) — or a manual dispatch naming a
       # release tag — attach the installers to a GitHub Release so users can
       # download them from the Releases page.
+      #
+      # Tag pushes keep the release a DRAFT: the in-app updater reads the
+      # latest published release, so publishing before every job has attached
+      # its assets (macOS notarization finishes last) 404s "Download & Install"
+      # on the not-yet-attached latest*.yml. Publish manually once the run is
+      # green: `gh release edit vX --draft=false`. Manual dispatches attach to
+      # an existing release without touching its draft/published state.
       - name: Attach to GitHub Release
         if: startsWith(github.ref, 'refs/tags/') || inputs.release_tag != ''
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: ${{ inputs.release_tag || '' }}
+          # 'true' on tag pushes; empty on dispatch = leave draft state as-is
+          draft: ${{ inputs.release_tag == '' && 'true' || '' }}
           files: |
             dist/*.zip
             dist/*.exe
@@ -110,11 +119,14 @@ jobs:
             dist/*.dmg
             dist/*.zip
 
+      # Draft semantics: see the matching step in the build job above.
       - name: Attach to GitHub Release
         if: startsWith(github.ref, 'refs/tags/') || inputs.release_tag != ''
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: ${{ inputs.release_tag || '' }}
+          # 'true' on tag pushes; empty on dispatch = leave draft state as-is
+          draft: ${{ inputs.release_tag == '' && 'true' || '' }}
           files: |
             dist/*.dmg
             dist/*.zip
