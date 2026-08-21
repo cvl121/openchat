@@ -9,6 +9,31 @@ import { compareVersions } from './version.js';
 
 export const WHATS_NEW = [
   {
+    version: '0.9.6',
+    items: {
+      en: [
+        'Reasoning models (GLM, DeepSeek R1, o-series) no longer look stuck: their thinking now streams live into a collapsible 💭 block above the reply, so you can watch — or stop — a long think instead of staring at dots.',
+        'New Reasoning Effort setting (Settings → Generation): keep the model default, cap thinking at low/medium/high, or turn it off where the model allows.',
+        'If a model spends its entire response budget thinking and produces no reply, the app now says exactly that — with its thoughts kept visible — instead of showing a mysteriously empty message.',
+      ],
+      es: [
+        'Los modelos de razonamiento (GLM, DeepSeek R1, serie o) ya no parecen colgados: su pensamiento se transmite en vivo en un bloque 💭 plegable encima de la respuesta, para que puedas observar — o detener — un pensamiento largo en lugar de mirar puntos suspensivos.',
+        'Nuevo ajuste Esfuerzo de razonamiento (Ajustes → Generación): mantén el valor predeterminado del modelo, limita el pensamiento a bajo/medio/alto, o desactívalo donde el modelo lo permita.',
+        'Si un modelo gasta todo su presupuesto de respuesta pensando y no produce ninguna respuesta, la app ahora lo dice claramente — manteniendo sus pensamientos visibles — en lugar de mostrar un mensaje misteriosamente vacío.',
+      ],
+      'zh-CN': [
+        '推理模型（GLM、DeepSeek R1、o 系列）不再像卡住了一样：思考过程会实时显示在回复上方的可折叠 💭 区块中，你可以观看 — 或中止 — 长时间的思考，而不是干等省略号。',
+        '新增推理强度设置（设置 → 生成）：保持模型默认、将思考限制为低/中/高，或在模型支持时关闭。',
+        '如果模型把全部回复预算都用于思考而没有生成回复，应用现在会明确说明 — 并保留其思考内容可见 — 而不是显示一条莫名其妙的空消息。',
+      ],
+      ja: [
+        '推論モデル（GLM、DeepSeek R1、o シリーズ）が固まって見える問題を解消：思考が返信の上の折りたたみ可能な 💭 ブロックにライブ表示されるので、長い思考を眺める — または停止する — ことができます。',
+        '新しい「推論の深さ」設定（設定 → 生成）：モデルの既定のまま、低/中/高で思考を制限、または対応モデルではオフにできます。',
+        'モデルが応答予算のすべてを思考に費やして返答を生成しなかった場合、謎の空メッセージではなく、その旨をはっきり表示します — 思考内容も見えるまま残ります。',
+      ],
+    },
+  },
+  {
     version: '0.9.5',
     items: {
       en: [
