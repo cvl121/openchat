@@ -9,7 +9,7 @@ async function invoke(channel, ...args) {
   return result && result.ok === true ? result.data : result;
 }
 
-const PUSH_CHANNELS = ['llm:chunk', 'llm:done', 'llm:error', 'llm:image', 'menu:newChat', 'menu:newCharacter', 'menu:settings', 'menu:search', 'menu:history', 'menu:regenerate', 'updates:available', 'updates:progress'];
+const PUSH_CHANNELS = ['llm:chunk', 'llm:reasoning', 'llm:done', 'llm:error', 'llm:image', 'menu:newChat', 'menu:newCharacter', 'menu:settings', 'menu:search', 'menu:history', 'menu:regenerate', 'updates:available', 'updates:progress'];
 
 contextBridge.exposeInMainWorld('tavern', {
   settings: {

@@ -902,3 +902,28 @@ html[lang^='zh'] .msg-content,
 html[lang^='ja'] .msg-content {
   line-break: strict;
 }
+
+/* Reasoning-model thinking: collapsible block above the reply, session-only.
+   Open while the model thinks with no visible content yet. */
+.thinking-block {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.thinking-block summary {
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-faint);
+}
+.thinking-block summary:hover {
+  color: var(--text-dim);
+}
+.thinking-text {
+  white-space: pre-wrap;
+  font-style: italic;
+  max-height: 200px;
+  overflow-y: auto;
+  margin-top: 6px;
+  padding: 4px 10px;
+  border-left: 2px solid var(--border);
+}

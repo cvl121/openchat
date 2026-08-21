@@ -104,9 +104,31 @@ function cacheFor(msg) {
   return entry;
 }
 
+// Reasoning-model thinking, per message, session-only (never persisted).
+// Keyed weakly so deleted messages release their (possibly large) thought text.
+const reasoningText = new WeakMap();
+
+/**
+ * Collapsible thinking block shown above a reasoning model's reply. Open while
+ * the model is still thinking with no visible content yet — this is what makes
+ * a long GLM/R1 thinking phase look alive instead of hung.
+ */
+function thinkingHTML(msg) {
+  const text = reasoningText.get(msg);
+  if (!text) return '';
+  const open = msg.__streaming && !msg.mes;
+  const label = t('chat.thinking', { tokens: estimateTokens(text).toLocaleString() });
+  return (
+    `<details class="thinking-block"${open ? ' open' : ''}>` +
+    `<summary>💭 ${escapeHtml(label)}</summary>` +
+    `<div class="thinking-text">${escapeHtml(text)}</div></details>`
+  );
+}
+
 function renderedMarkdown(msg) {
   const entry = cacheFor(msg);
-  return (entry.html ??= renderMarkdown(msg.mes));
+  const body = (entry.html ??= renderMarkdown(msg.mes));
+  return thinkingHTML(msg) + body;
 }
 
 function messageTokens(msg) {
@@ -138,11 +160,36 @@ export function initChat(callbacks) {
       });
     }
   });
+  // Reasoning-model thinking: accumulate per message and repaint the open
+  // thinking block with the same frame-coalescing as content chunks.
+  window.tavern.on('llm:reasoning', ({ requestId, text }) => {
+    const run = state.runs.get(requestId);
+    if (!run) return;
+    const msg = run.msg;
+    reasoningText.set(msg, (reasoningText.get(msg) ?? '') + text);
+    if (run.chat !== state.currentChat) return;
+    if (!renderQueued && streamingMsgEl) {
+      renderQueued = true;
+      requestAnimationFrame(() => {
+        renderQueued = false;
+        if (state.runs.has(requestId) && run.chat === state.currentChat && streamingMsgEl) {
+          streamingMsgEl.innerHTML = renderedMarkdown(msg);
+          scrollToBottom(false);
+        }
+      });
+    }
+  });
   window.tavern.on('llm:done', async ({ requestId, finishReason, usage }) => {
     const run = state.runs.get(requestId);
     if (!run) return;
     if (usage) run.usage = usage; // provider-reported token counts, when available
     setNotice(run.charName, run.file, { finishReason: finishReason ?? null });
+    // A reasoning model that hit max-tokens with no visible reply spent the
+    // whole budget thinking — the message keeps its thinking block for this
+    // session, but this notice explains what happened and how to fix it.
+    if (LENGTH_REASONS.has(finishReason) && !run.msg?.mes.trim() && reasoningText.get(run.msg)) {
+      setNotice(run.charName, run.file, { error: t('chat.thinkingExhausted') });
+    }
     if (LENGTH_REASONS.has(finishReason)) {
       devLog('INFO', `response truncated by max-tokens limit (finish_reason: ${finishReason})`);
     }
@@ -1413,6 +1460,7 @@ async function generateResponse({
     newMessages.add(msg);
   }
   msg.__streaming = true;
+  reasoningText.delete(msg); // a fresh attempt starts its thinking from scratch
 
   const requestId = uuid();
   const run = {

@@ -186,9 +186,14 @@ export function registerIPC() {
     // SSE tokens can arrive far faster than the renderer paints; batch them
     // into one IPC message per ~16ms instead of one per token.
     let pendingText = '';
+    let pendingReasoning = '';
     let flushTimer = null;
     const flushChunks = () => {
       flushTimer = null;
+      if (pendingReasoning) {
+        send('llm:reasoning', { requestId, text: pendingReasoning });
+        pendingReasoning = '';
+      }
       if (pendingText) {
         send('llm:chunk', { requestId, text: pendingText });
         pendingText = '';
@@ -198,6 +203,10 @@ export function registerIPC() {
       pendingText += text;
       if (!flushTimer) flushTimer = setTimeout(flushChunks, 16);
     };
+    const onReasoning = (text) => {
+      pendingReasoning += text;
+      if (!flushTimer) flushTimer = setTimeout(flushChunks, 16);
+    };
     const onImage = (dataURL) => send('llm:image', { requestId, dataURL });
     let finishReason = null;
     let usage = null;
@@ -205,6 +214,7 @@ export function registerIPC() {
       const full = await llm.sendMessage(messages, config, onChunk, {
         signal: controller.signal,
         onImage,
+        onReasoning,
         onFinishReason: (reason) => (finishReason = reason),
         onUsage: (u) => (usage = u),
       });

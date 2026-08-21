@@ -249,6 +249,12 @@ function openAICompatibleBody(messages, config, stream) {
   if (config.provider === 'openai' && stream) {
     body.stream_options = { include_usage: true };
   }
+  // Reasoning-model thinking control (OpenRouter normalizes `effort` per
+  // vendor; 'none' disables thinking where the model allows it). 'auto'
+  // sends nothing and leaves the model at its own default.
+  if (config.provider === 'openrouter' && p.reasoning_effort && p.reasoning_effort !== 'auto') {
+    body.reasoning = { effort: p.reasoning_effort };
+  }
   return body;
 }
 
@@ -397,10 +403,52 @@ function extractChunk(provider, json) {
     case 'claude':
       return json.type === 'content_block_delta' ? (json.delta?.text ?? null) : null;
     case 'gemini':
-      // Multi-part chunks happen in image-output mode (text after an image part)
-      return json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') || null;
+      // Multi-part chunks happen in image-output mode (text after an image
+      // part). Thought summaries (p.thought) are reasoning, not content.
+      return (
+        json.candidates?.[0]?.content?.parts
+          ?.filter((p) => !p.thought)
+          .map((p) => p.text ?? '')
+          .join('') || null
+      );
     default:
       return json.choices?.[0]?.delta?.content ?? null;
+  }
+}
+
+/**
+ * Reasoning/thinking text in a streamed payload. Reasoning models (GLM,
+ * DeepSeek R1, o-series via some providers) stream their thinking BEFORE any
+ * content — dropping it makes the app look hung for minutes while tokens are
+ * billed invisibly, and keeps the idle stall-guard from ever firing.
+ */
+function extractReasoningChunk(provider, json) {
+  switch (provider) {
+    case 'claude':
+      // Extended-thinking blocks stream as thinking_delta events
+      return json.type === 'content_block_delta' && json.delta?.type === 'thinking_delta'
+        ? (json.delta.thinking ?? null)
+        : null;
+    case 'gemini':
+      return (
+        json.candidates?.[0]?.content?.parts
+          ?.filter((p) => p.thought)
+          .map((p) => p.text ?? '')
+          .join('') || null
+      );
+    default: {
+      // OpenRouter: legacy `delta.reasoning` string, or structured
+      // `delta.reasoning_details` entries carrying text/summary
+      const delta = json.choices?.[0]?.delta;
+      if (!delta) return null;
+      if (typeof delta.reasoning === 'string' && delta.reasoning) return delta.reasoning;
+      const details = delta.reasoning_details;
+      if (Array.isArray(details)) {
+        const text = details.map((d) => d.text ?? d.summary ?? '').join('');
+        if (text) return text;
+      }
+      return null;
+    }
   }
 }
 
@@ -409,9 +457,40 @@ function extractComplete(provider, json) {
     case 'claude':
       return (json.content ?? []).map((b) => b.text ?? '').join('');
     case 'gemini':
-      return json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
+      return (
+        json.candidates?.[0]?.content?.parts
+          ?.filter((p) => !p.thought)
+          .map((p) => p.text ?? '')
+          .join('') ?? ''
+      );
     default:
       return json.choices?.[0]?.message?.content ?? '';
+  }
+}
+
+/** Reasoning text in a complete (non-streaming) payload, or null. */
+function extractReasoningComplete(provider, json) {
+  switch (provider) {
+    case 'claude':
+      return (json.content ?? []).filter((b) => b.type === 'thinking').map((b) => b.thinking ?? '').join('') || null;
+    case 'gemini':
+      return (
+        json.candidates?.[0]?.content?.parts
+          ?.filter((p) => p.thought)
+          .map((p) => p.text ?? '')
+          .join('') || null
+      );
+    default: {
+      const m = json.choices?.[0]?.message;
+      if (!m) return null;
+      if (typeof m.reasoning === 'string' && m.reasoning) return m.reasoning;
+      const details = m.reasoning_details;
+      if (Array.isArray(details)) {
+        const text = details.map((d) => d.text ?? d.summary ?? '').join('');
+        if (text) return text;
+      }
+      return null;
+    }
   }
 }
 
@@ -599,7 +678,7 @@ function abortableDelay(ms, signal) {
  * Transient failures (429/5xx/network) are retried with backoff — but never
  * once any content has reached the callbacks, and never on abort.
  */
-export async function sendMessage(messages, config, onChunk, { signal, onImage, onFinishReason, onUsage } = {}) {
+export async function sendMessage(messages, config, onChunk, { signal, onImage, onFinishReason, onUsage, onReasoning } = {}) {
   const stream = config.params.stream_response !== false;
   const req = buildRequest(messages, config, stream);
   let delivered = false;
@@ -611,6 +690,11 @@ export async function sendMessage(messages, config, onChunk, { signal, onImage, 
     onImage: (url) => {
       delivered = true;
       onImage?.(url);
+    },
+    // Reasoning is user-visible too — once any arrived, a retry would replay it
+    onReasoning: (text) => {
+      delivered = true;
+      onReasoning?.(text);
     },
     onFinishReason,
     onUsage,
@@ -625,7 +709,7 @@ export async function sendMessage(messages, config, onChunk, { signal, onImage, 
   }
 }
 
-async function attemptSend(req, config, stream, { onChunk, onImage, onFinishReason, onUsage }, signal) {
+async function attemptSend(req, config, stream, { onChunk, onImage, onFinishReason, onUsage, onReasoning }, signal) {
   // A stalled connection would otherwise hang until manual stop: abort if no
   // bytes arrive for STREAM_IDLE_TIMEOUT_MS.
   const idle = new AbortController();
@@ -661,6 +745,8 @@ async function attemptSend(req, config, stream, { onChunk, onImage, onFinishReas
 
     if (!stream) {
       const json = await response.json();
+      const think = extractReasoningComplete(config.provider, json);
+      if (think) onReasoning?.(think);
       const text = extractComplete(config.provider, json);
       if (text) onChunk?.(text);
       for (const image of extractImages(config.provider, json)) onImage?.(image);
@@ -686,6 +772,8 @@ async function attemptSend(req, config, stream, { onChunk, onImage, onFinishReas
         const message = json.error.message ?? (typeof json.error === 'string' ? json.error : 'Stream error');
         throw new LLMError(message, { body: data });
       }
+      const think = extractReasoningChunk(config.provider, json);
+      if (think) onReasoning?.(think);
       const text = extractChunk(config.provider, json);
       if (text) {
         full += text;

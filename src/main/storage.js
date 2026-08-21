@@ -113,6 +113,8 @@ export const DEFAULT_GENERATION_PARAMS = {
   repetition_penalty: 1.0,
   stop_sequences: [],
   stream_response: true,
+  // Reasoning-model thinking: 'auto' (model default) | 'none' | 'low' | 'medium' | 'high'
+  reasoning_effort: 'auto',
   min_p: 0.0,
   top_a: 0.0,
   typical_p: 1.0,

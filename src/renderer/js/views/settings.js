@@ -668,6 +668,18 @@ function renderGeneration() {
     sliderRow(t('settings.maxTokens'), { min: 64, max: 32768, step: 64, get: () => p.max_tokens, set: set('max_tokens'),
       hint: t('settings.maxTokensHint') }),
     checkboxRow(t('settings.streamResponses'), { get: () => p.stream_response, set: set('stream_response') }),
+    selectRow(t('settings.reasoningEffort'), {
+      options: [
+        ['auto', t('settings.reasoningAuto')],
+        ['none', t('settings.reasoningNone')],
+        ['low', t('settings.reasoningLow')],
+        ['medium', t('settings.reasoningMedium')],
+        ['high', t('settings.reasoningHigh')],
+      ],
+      get: () => p.reasoning_effort ?? 'auto',
+      set: set('reasoning_effort'),
+      hint: t('settings.reasoningEffortHint'),
+    }),
     checkboxRow(t('settings.costEstimates'), {
       get: () => s.showCostEstimates ?? true,
       set: (v) => {

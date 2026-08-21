@@ -68,6 +68,16 @@ function startMockServer() {
             res.end();
             return;
           }
+          if (json.model === 'reasoning-model') {
+            // GLM/R1-style: thinking streams before any content — legacy
+            // `reasoning` string and structured `reasoning_details` both occur
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { reasoning: 'hmm, ' } }] })}\n\n`);
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_details: [{ type: 'reasoning.text', text: 'let me think' }] } }] })}\n\n`);
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'The answer.' }, finish_reason: 'stop' }] })}\n\n`);
+            res.write('data: [DONE]\n\n');
+            res.end();
+            return;
+          }
           const chunks = ['Hello', ' from', ' the', ' tavern!'];
           for (const text of chunks) {
             res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`);
@@ -713,6 +723,53 @@ test('gemini: later system messages stay positional as user turns', async () => 
       ]
     );
     assert.deepEqual(usage, { inTokens: 30, outTokens: 5, cachedTokens: 20 });
+  } finally {
+    server.close();
+  }
+});
+
+test('reasoning deltas stream via onReasoning and stay out of the content', async () => {
+  const server = await startMockServer();
+  try {
+    const chunks = [];
+    const thoughts = [];
+    const full = await sendMessage(
+      [{ role: 'user', content: 'hi' }],
+      config(server, { model: 'reasoning-model' }),
+      (text) => chunks.push(text),
+      { onReasoning: (text) => thoughts.push(text) }
+    );
+    // Both the legacy `reasoning` string and `reasoning_details` entries arrive
+    assert.deepEqual(thoughts, ['hmm, ', 'let me think']);
+    assert.equal(full, 'The answer.');
+    assert.deepEqual(chunks, ['The answer.']);
+  } finally {
+    server.close();
+  }
+});
+
+test('reasoning effort setting maps to the OpenRouter reasoning param', async () => {
+  const server = await startMockServer();
+  try {
+    const cfg = config(server);
+    cfg.params.reasoning_effort = 'low';
+    await sendMessage([{ role: 'user', content: 'hi' }], cfg, () => {});
+    assert.deepEqual(server.lastRequest.body.reasoning, { effort: 'low' });
+
+    cfg.params.reasoning_effort = 'none';
+    await sendMessage([{ role: 'user', content: 'hi' }], cfg, () => {});
+    assert.deepEqual(server.lastRequest.body.reasoning, { effort: 'none' });
+
+    // 'auto' (and unset) leave the model at its own default
+    cfg.params.reasoning_effort = 'auto';
+    await sendMessage([{ role: 'user', content: 'hi' }], cfg, () => {});
+    assert.equal(server.lastRequest.body.reasoning, undefined);
+
+    // Direct-API providers don't get the OpenRouter-specific param
+    const openaiCfg = config(server, { provider: 'openai' });
+    openaiCfg.params.reasoning_effort = 'low';
+    await sendMessage([{ role: 'user', content: 'hi' }], openaiCfg, () => {});
+    assert.equal(server.lastRequest.body.reasoning, undefined);
   } finally {
     server.close();
   }
