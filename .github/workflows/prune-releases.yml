@@ -1,0 +1,35 @@
+name: Prune old releases
+
+# Keep the Releases page to a single entry: whenever a release is published,
+# delete every other published release. Drafts survive (the next version's
+# draft must live through its build window — see build.yml), and git tags are
+# untouched: the protect-release-tags ruleset forbids deleting them anyway.
+# Old installers become unrecoverable once pruned; that is the point — the
+# policy is monotonic versions with only the newest build downloadable.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write # delete releases
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete every published release except the latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          latest=$(gh api "repos/$REPO/releases/latest" --jq .tag_name)
+          echo "Keeping $latest"
+          gh api "repos/$REPO/releases" --paginate |
+            jq -r --arg keep "$latest" \
+              '.[] | select((.draft or .prerelease) | not) | select(.tag_name != $keep) | .tag_name' |
+            while read -r tag; do
+              echo "Deleting $tag"
+              gh release delete "$tag" -R "$REPO" --yes
+            done

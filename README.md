@@ -2,7 +2,7 @@
 
 [![Test](https://github.com/cvl121/openchat/actions/workflows/test.yml/badge.svg)](https://github.com/cvl121/openchat/actions/workflows/test.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPLv3-blue.svg)](LICENSE)
-[![Status: Beta](https://img.shields.io/badge/status-beta-orange.svg)](https://github.com/cvl121/openchat/releases)
+[![Status: Beta](https://img.shields.io/badge/status-beta-orange.svg)](https://github.com/cvl121/openchat/releases/latest)
 
 > **OpenChat is in beta.** It's stable for daily use, but expect rough edges and occasional breaking changes before 1.0. The project currently has a single maintainer, who aims to ship updates roughly every one to four weeks on a best-effort basis.
 
@@ -132,7 +132,7 @@ All requests run in the Electron main process (no CORS issues) and stream. Rate 
 
 ## Getting Started
 
-**Download**: grab the latest installer from [Releases](https://github.com/cvl121/openchat/releases) — macOS builds (Apple Silicon & Intel, DMG/zip) are signed and notarized; a Windows 10/11 installer is included (unsigned for now, so SmartScreen may ask you to confirm via "More info → Run anyway"); Linux ships as AppImage and deb.
+**Download**: grab the installer for your platform from the [latest release](https://github.com/cvl121/openchat/releases/latest) — macOS builds (Apple Silicon & Intel, DMG/zip) are signed and notarized; a Windows 10/11 installer is included (unsigned for now, so SmartScreen may ask you to confirm via "More info → Run anyway"); Linux ships as AppImage and deb. Only the newest release is kept downloadable — older installers are pruned automatically, and the in-app updater always moves you to the current version.
 
 **Or run from source**:
 
