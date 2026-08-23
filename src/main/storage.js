@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { Worker } from 'node:worker_threads';
 import {
   isPNG,
   parseCharacterCard,
@@ -364,6 +365,7 @@ function migrateChats(oldName, newName) {
 }
 
 export async function deleteCharacter(filename) {
+  await drainChatQueue(); // archiving moves the chat dir — flush queued writes first
   const full = path.join(charactersDir(), sanitizeFilename(filename));
   // Chats are keyed by character name — read it before the card goes away
   let name = null;
@@ -421,6 +423,86 @@ function chatsDirFor(characterName) {
 function chatTimestamp(d = new Date()) {
   const pad = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}@${pad(d.getHours())}h${pad(d.getMinutes())}m${pad(d.getSeconds())}s`;
+}
+
+// --- Chat I/O worker --------------------------------------------------------
+// JSON.parse/stringify of a multi-MB chat is CPU work that would otherwise run
+// on the main process event loop — where IPC and in-flight SSE streams live.
+// A single FIFO worker serializes load/append/rewrite so operations apply in
+// arrival order (an append can never land between a queued rewrite's snapshot
+// and its write). The source is eval'd so packaged (asar) builds need no
+// worker-file path resolution.
+
+const CHAT_WORKER_SOURCE = `
+const { parentPort } = require('node:worker_threads');
+const fs = require('node:fs');
+parentPort.on('message', ({ id, op, args }) => {
+  try {
+    let result = null;
+    if (op === 'load') {
+      const lines = fs.readFileSync(args.path, 'utf8').split('\\n').filter((l) => l.trim());
+      const metadata = lines.length ? JSON.parse(lines[0]) : {};
+      const messages = [];
+      for (const line of lines.slice(1)) {
+        try { messages.push(JSON.parse(line)); } catch {}
+      }
+      result = { metadata, messages };
+    } else if (op === 'rewrite') {
+      const lines = [JSON.stringify(args.metadata), ...args.messages.map((m) => JSON.stringify(m))];
+      const tmp = args.path + '.tmp-' + process.pid + '-' + Math.random().toString(36).slice(2);
+      fs.writeFileSync(tmp, lines.join('\\n') + '\\n');
+      fs.renameSync(tmp, args.path);
+      const st = fs.statSync(args.path);
+      result = { mtimeMs: st.mtimeMs, size: st.size };
+    } else if (op === 'append') {
+      fs.appendFileSync(args.path, JSON.stringify(args.message) + '\\n');
+      const st = fs.statSync(args.path);
+      result = { mtimeMs: st.mtimeMs, size: st.size };
+    } // op 'noop': drain barrier — nothing to do
+    parentPort.postMessage({ id, result });
+  } catch (err) {
+    parentPort.postMessage({ id, error: String((err && err.message) || err) });
+  }
+});
+`;
+
+let chatWorker = null;
+const chatWorkerJobs = new Map();
+let chatWorkerSeq = 0;
+
+function getChatWorker() {
+  if (!chatWorker) {
+    chatWorker = new Worker(CHAT_WORKER_SOURCE, { eval: true });
+    chatWorker.unref(); // idle worker must not hold the process open (tests)
+    chatWorker.on('message', ({ id, result, error }) => {
+      const job = chatWorkerJobs.get(id);
+      if (!job) return;
+      chatWorkerJobs.delete(id);
+      if (!chatWorkerJobs.size) chatWorker?.unref();
+      error != null ? job.reject(new Error(error)) : job.resolve(result);
+    });
+    chatWorker.on('error', (err) => {
+      for (const job of chatWorkerJobs.values()) job.reject(err);
+      chatWorkerJobs.clear();
+      chatWorker = null; // next call restarts it
+    });
+  }
+  return chatWorker;
+}
+
+function chatWorkerCall(op, args) {
+  return new Promise((resolve, reject) => {
+    const worker = getChatWorker();
+    const id = ++chatWorkerSeq;
+    chatWorkerJobs.set(id, { resolve, reject });
+    worker.ref(); // keep the process alive while a job is pending
+    worker.postMessage({ id, op, args });
+  });
+}
+
+/** Resolves after every currently queued chat write has hit disk. */
+function drainChatQueue() {
+  return chatWorker && chatWorkerJobs.size ? chatWorkerCall('noop', {}) : Promise.resolve();
 }
 
 /** List chats for a character, newest first: [{ file, metadata, messageCount, mtime, preview }] */
@@ -486,51 +568,48 @@ export function createChat(characterName, userName) {
   return { file, metadata, messages: [] };
 }
 
-export function loadChat(characterName, file) {
+export async function loadChat(characterName, file) {
   const full = path.join(chatsDirFor(characterName), sanitizeFilename(file));
-  const lines = fs
-    .readFileSync(full, 'utf8')
-    .split('\n')
-    .filter((l) => l.trim());
-  const metadata = lines.length ? JSON.parse(lines[0]) : {};
-  const messages = [];
-  for (const line of lines.slice(1)) {
-    try {
-      messages.push(JSON.parse(line));
-    } catch {}
-  }
+  const { metadata, messages } = await chatWorkerCall('load', { path: full });
   return { file, metadata, messages };
 }
 
-export function appendMessage(characterName, file, message) {
+/** Refresh a chat's list-cache entry in place from a completed write. */
+function updateChatListCache(characterName, file, st, apply) {
+  const cached = chatListCache.get(`${characterName}/${file}`);
+  if (!cached) return;
+  cached.stamp = `${st.mtimeMs}:${st.size}`;
+  cached.entry.mtime = st.mtimeMs;
+  apply(cached.entry);
+}
+
+export async function appendMessage(characterName, file, message) {
   const full = path.join(chatsDirFor(characterName), sanitizeFilename(file));
-  fs.appendFileSync(full, JSON.stringify(message) + '\n');
+  const st = await chatWorkerCall('append', { path: full, message });
   // Update the list cache in place: the sidebar refreshes after every send,
   // and re-reading a multi-MB file just to bump the count and preview is the
   // hottest storage path in the app.
-  const cached = chatListCache.get(`${characterName}/${file}`);
-  if (cached) {
-    try {
-      const st = fs.statSync(full);
-      cached.stamp = `${st.mtimeMs}:${st.size}`;
-      cached.entry.messageCount += 1;
-      cached.entry.mtime = st.mtimeMs;
-      cached.entry.preview = truncateChars(message.mes ?? '', 120);
-    } catch {
-      chatListCache.delete(`${characterName}/${file}`);
-    }
-  }
+  updateChatListCache(characterName, file, st, (entry) => {
+    entry.messageCount += 1;
+    entry.preview = truncateChars(message.mes ?? '', 120);
+  });
   return true;
 }
 
 /** Rewrite the whole chat file (used after edits, swipes, deletions). */
-export function rewriteChat(characterName, file, metadata, messages) {
-  const lines = [JSON.stringify(metadata), ...messages.map((m) => JSON.stringify(m))];
-  writeFileAtomic(path.join(chatsDirFor(characterName), sanitizeFilename(file)), lines.join('\n') + '\n');
+export async function rewriteChat(characterName, file, metadata, messages) {
+  const full = path.join(chatsDirFor(characterName), sanitizeFilename(file));
+  const st = await chatWorkerCall('rewrite', { path: full, metadata, messages });
+  updateChatListCache(characterName, file, st, (entry) => {
+    entry.metadata = metadata;
+    entry.messageCount = messages.length;
+    entry.preview = truncateChars(messages.at(-1)?.mes ?? '', 120);
+  });
   return true;
 }
 
 export async function deleteChat(characterName, file) {
+  await drainChatQueue(); // a queued rewrite must not resurrect the file
   await removeFile(path.join(chatsDirFor(characterName), sanitizeFilename(file)));
   chatListCache.delete(`${characterName}/${file}`);
   return true;
@@ -558,10 +637,10 @@ export async function searchChats(query, characterName = null) {
     if (!fs.existsSync(dirPath)) continue;
     for (const file of fs.readdirSync(dirPath)) {
       if (!file.endsWith('.jsonl')) continue;
-      await new Promise((resolve) => setImmediate(resolve));
+      // The worker round-trip is the yield point; heavy parsing runs off-loop
       if (generation !== searchGeneration) return results; // superseded
       try {
-        const { metadata, messages } = loadChat(dir, file);
+        const { metadata, messages } = await loadChat(dir, file);
         for (let index = 0; index < messages.length; index++) {
           const m = messages[index];
           if (foldText(m.mes ?? '').includes(q)) {
@@ -612,8 +691,8 @@ function snippetAround(text, q) {
   return (start > 0 ? '…' : '') + text.slice(start, end) + (end < text.length ? '…' : '');
 }
 
-export function exportChatMarkdown(characterName, file, destPath) {
-  const { metadata, messages } = loadChat(characterName, file);
+export async function exportChatMarkdown(characterName, file, destPath) {
+  const { metadata, messages } = await loadChat(characterName, file);
   // Array + join, not += — string concat over a huge chat is quadratic
   const parts = [`# ${metadata.character_name ?? characterName}\n\n`];
   for (const m of messages) {
@@ -623,7 +702,8 @@ export function exportChatMarkdown(characterName, file, destPath) {
   return true;
 }
 
-export function exportChatJSONL(characterName, file, destPath) {
+export async function exportChatJSONL(characterName, file, destPath) {
+  await drainChatQueue(); // the copy must include any write still in flight
   fs.copyFileSync(path.join(chatsDirFor(characterName), sanitizeFilename(file)), destPath);
   return true;
 }

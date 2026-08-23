@@ -59,16 +59,16 @@ test('settings: chat-mode feature defaults are present', () => {
   assert.equal(fresh.showCostEstimates, true);
 });
 
-test('chats: listChats cache invalidates on append and rewrite', () => {
+test('chats: listChats cache invalidates on append and rewrite', async () => {
   const { file } = createChat('CacheChar', 'User');
   const first = listChats('CacheChar').find((c) => c.file === file);
   assert.equal(first.messageCount, 0);
-  appendMessage('CacheChar', file, { name: 'User', is_user: true, mes: 'hello cache' });
+  await appendMessage('CacheChar', file, { name: 'User', is_user: true, mes: 'hello cache' });
   const afterAppend = listChats('CacheChar').find((c) => c.file === file);
   assert.equal(afterAppend.messageCount, 1);
   assert.equal(afterAppend.preview, 'hello cache');
   const meta = { ...afterAppend.metadata, title: 'Renamed' };
-  rewriteChat('CacheChar', file, meta, [{ name: 'User', is_user: true, mes: 'rewritten' }]);
+  await rewriteChat('CacheChar', file, meta, [{ name: 'User', is_user: true, mes: 'rewritten' }]);
   const afterRewrite = listChats('CacheChar').find((c) => c.file === file);
   assert.equal(afterRewrite.metadata.title, 'Renamed');
   assert.equal(afterRewrite.preview, 'rewritten');
@@ -100,7 +100,7 @@ test('settings: loaded objects never alias the shared defaults', () => {
   assert.deepEqual(DEFAULT_SETTINGS.pinnedCharacters, []);
 });
 
-test('characters: save, list, unique filenames, delete', () => {
+test('characters: save, list, unique filenames, delete', async () => {
   const { filename } = saveCharacter({ name: 'Hero', description: 'd1' });
   assert.equal(filename, 'Hero.png');
   const { filename: second } = saveCharacter({ name: 'Hero', description: 'd2' });
@@ -111,14 +111,14 @@ test('characters: save, list, unique filenames, delete', () => {
   // Update in place keeps the filename
   const updated = saveCharacter({ name: 'Hero Renamed' }, { filename });
   assert.equal(updated.filename, filename);
-  deleteCharacter(second);
+  await deleteCharacter(second);
   assert.equal(listCharacters().length, 1);
 });
 
 test('characters: deleting a character archives its chats away from a future namesake', async () => {
   const { filename } = saveCharacter({ name: 'Ghost' });
   const chat = createChat('Ghost', 'User');
-  appendMessage('Ghost', chat.file, { name: 'User', is_user: true, mes: 'old history', send_date: '2026-01-01' });
+  await appendMessage('Ghost', chat.file, { name: 'User', is_user: true, mes: 'old history', send_date: '2026-01-01' });
   assert.equal(listChats('Ghost').length, 1);
 
   await deleteCharacter(filename);
@@ -144,15 +144,15 @@ test('characters: chats survive deletion while a same-name card remains', async 
 test('chats: create, append, rewrite, list, search', async () => {
   const chat = createChat('Hero', 'User');
   assert.equal(chat.metadata.character_name, 'Hero');
-  appendMessage('Hero', chat.file, { name: 'User', is_user: true, mes: 'Hello world', send_date: '2026-01-01' });
-  appendMessage('Hero', chat.file, { name: 'Hero', is_user: false, mes: 'Greetings, traveler!', send_date: '2026-01-01' });
-  let loaded = loadChat('Hero', chat.file);
+  await appendMessage('Hero', chat.file, { name: 'User', is_user: true, mes: 'Hello world', send_date: '2026-01-01' });
+  await appendMessage('Hero', chat.file, { name: 'Hero', is_user: false, mes: 'Greetings, traveler!', send_date: '2026-01-01' });
+  let loaded = await loadChat('Hero', chat.file);
   assert.equal(loaded.messages.length, 2);
 
   loaded.messages[1].mes = 'Edited reply';
   loaded.messages[1].swipes = ['Edited reply', 'Alt reply'];
-  rewriteChat('Hero', chat.file, loaded.metadata, loaded.messages);
-  loaded = loadChat('Hero', chat.file);
+  await rewriteChat('Hero', chat.file, loaded.metadata, loaded.messages);
+  loaded = await loadChat('Hero', chat.file);
   assert.equal(loaded.messages[1].mes, 'Edited reply');
   assert.deepEqual(loaded.messages[1].swipes, ['Edited reply', 'Alt reply']);
 
@@ -193,16 +193,16 @@ test('world info: save, list, ST field normalization', () => {
   assert.equal(st.entries[0].insertion_order, 5);
 });
 
-test('characters: renaming migrates the chat folder and metadata', () => {
+test('characters: renaming migrates the chat folder and metadata', async () => {
   const { filename } = saveCharacter({ name: 'Mover' });
   const chat = createChat('Mover', 'User');
-  appendMessage('Mover', chat.file, { name: 'User', is_user: true, mes: 'hi', send_date: '2026-01-01' });
+  await appendMessage('Mover', chat.file, { name: 'User', is_user: true, mes: 'hi', send_date: '2026-01-01' });
   saveCharacter({ name: 'Mover II' }, { filename });
   assert.ok(!fs.existsSync(path.join(tmp, 'chats', 'Mover')));
   const chats = listChats('Mover II');
   assert.equal(chats.length, 1);
   assert.equal(chats[0].metadata.character_name, 'Mover II');
-  const loaded = loadChat('Mover II', chat.file);
+  const loaded = await loadChat('Mover II', chat.file);
   assert.equal(loaded.messages.length, 1);
   assert.equal(loaded.messages[0].mes, 'hi');
 });
@@ -295,12 +295,12 @@ test('settings: failed decryption never wipes the stored key blob', () => {
   initStorage(tmp); // restore plaintext mode for later tests
 });
 
-test('chats: exported filenames are sanitized against traversal', () => {
-  assert.throws(() => exportChatJSONL('Hero', '../../user/settings.json', path.join(tmp, 'stolen.json')));
+test('chats: exported filenames are sanitized against traversal', async () => {
+  await assert.rejects(() => exportChatJSONL('Hero', '../../user/settings.json', path.join(tmp, 'stolen.json')));
   assert.ok(!fs.existsSync(path.join(tmp, 'stolen.json')));
 });
 
-test('chats: SillyTavern JSONL import round-trips messages and swipes', () => {
+test('chats: SillyTavern JSONL import round-trips messages and swipes', async () => {
   const src = path.join(tmp, 'st-chat.jsonl');
   const lines = [
     { user_name: 'Traveler', character_name: 'Old Name', create_date: '2025-05-01', chat_metadata: { note: 'x' } },
@@ -310,7 +310,7 @@ test('chats: SillyTavern JSONL import round-trips messages and swipes', () => {
   fs.writeFileSync(src, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
   const { file, badLines } = importChatJSONL('Hero', src);
   assert.equal(badLines, 0);
-  const { metadata, messages } = loadChat('Hero', file);
+  const { metadata, messages } = await loadChat('Hero', file);
   assert.equal(metadata.character_name, 'Hero'); // rebound to the importing character
   assert.equal(metadata.user_name, 'Traveler');
   assert.deepEqual(metadata.chat_metadata, { note: 'x' });
@@ -322,7 +322,7 @@ test('chats: SillyTavern JSONL import round-trips messages and swipes', () => {
   // Headerless files (every line a message) are tolerated
   fs.writeFileSync(src, JSON.stringify({ name: 'X', is_user: true, mes: 'solo line' }) + '\n');
   const file2 = importChatJSONL('Hero', src).file;
-  assert.equal(loadChat('Hero', file2).messages[0].mes, 'solo line');
+  assert.equal((await loadChat('Hero', file2)).messages[0].mes, 'solo line');
 
   // A malformed line is skipped and reported; the rest of the chat survives
   fs.writeFileSync(
@@ -334,7 +334,7 @@ test('chats: SillyTavern JSONL import round-trips messages and swipes', () => {
   );
   const tolerant = importChatJSONL('Hero', src);
   assert.equal(tolerant.badLines, 1);
-  assert.deepEqual(loadChat('Hero', tolerant.file).messages.map((m) => m.mes), ['kept 1', 'kept 2']);
+  assert.deepEqual((await loadChat('Hero', tolerant.file)).messages.map((m) => m.mes), ['kept 1', 'kept 2']);
 
   // Entirely malformed files are still rejected
   fs.writeFileSync(src, 'not json at all\n');

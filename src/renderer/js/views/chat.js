@@ -52,6 +52,12 @@ let renderedDraftKey = null; // conversation the live #chat-input belongs to
 // bottom even though the user never scrolled away — intent has to be tracked,
 // not inferred from distance. Cleared only by the user scrolling up.
 let followingBottom = true;
+// Windowed message rendering (huge-chat support): how many of the newest
+// messages get DOM nodes up front, and how many more per scroll-up expansion.
+const RENDER_WINDOW = 150;
+const RENDER_BATCH = 150;
+let renderWindowStart = Infinity; // first rendered index; shrinks as the user scrolls up
+let renderWindowConv = null; // window resets when the conversation changes
 let messagesResizeObserver = null; // re-anchors on message growth while following
 // Stop reasons that mean "truncated by the max-tokens limit" per provider
 const LENGTH_REASONS = new Set(['length', 'max_tokens', 'MAX_TOKENS']);
@@ -827,7 +833,20 @@ export function renderChat({ scrollBottom = false } = {}) {
   // and lastAssistantIndex scans the tail — O(n²) over a long chat otherwise
   const msgPersona = activePersona();
   const lastAssistant = lastAssistantIndex();
-  messages.forEach((msg, index) => messagesEl.append(messageEl(msg, index, msgPersona, lastAssistant)));
+  // Windowed rendering: only the newest RENDER_WINDOW messages get DOM nodes;
+  // scrolling near the top prepends earlier batches seamlessly (see the
+  // scroll listener below). Data — search, token estimates, prompts — always
+  // uses the full array; only DOM construction is windowed. The window floor
+  // persists per conversation so re-renders keep whatever the user expanded.
+  const conv = state.currentChat ? convKey(data.name, state.currentChat.file) : null;
+  if (conv !== renderWindowConv) {
+    renderWindowConv = conv;
+    renderWindowStart = Infinity;
+  }
+  renderWindowStart = Math.min(renderWindowStart, Math.max(0, messages.length - RENDER_WINDOW));
+  for (let index = renderWindowStart; index < messages.length; index++) {
+    messagesEl.append(messageEl(messages[index], index, msgPersona, lastAssistant));
+  }
   if (notice.error) {
     messagesEl.append(
       el(
@@ -869,6 +888,7 @@ export function renderChat({ scrollBottom = false } = {}) {
   // to the bottom until they scrolled fast enough to escape it). Re-follow
   // only when the user themselves reaches the bottom.
   let lastScrollTop = messagesEl.scrollTop;
+  let expandUp = null; // assigned below, after the resize observer exists
   messagesEl.addEventListener('wheel', (e) => {
     if (e.deltaY < 0) followingBottom = false;
   }, { passive: true });
@@ -878,6 +898,7 @@ export function renderChat({ scrollBottom = false } = {}) {
     if (messagesEl.scrollTop < lastScrollTop) followingBottom = false;
     else if (distance < 2) followingBottom = true;
     lastScrollTop = messagesEl.scrollTop;
+    if (messagesEl.scrollTop < 400) expandUp?.();
   });
   // While following the newest message, any growth in a message re-anchors
   // the view: streamed text, attachment images finishing their async load,
@@ -898,6 +919,30 @@ export function renderChat({ scrollBottom = false } = {}) {
     });
   });
   for (const child of messagesEl.children) messagesResizeObserver.observe(child, { box: 'border-box' });
+
+  // Seamless upward expansion: prepend the previous batch of messages when
+  // the user scrolls near the top, keeping the viewport anchored on what they
+  // were reading. No full re-render — existing nodes (and any in-progress
+  // stream) are untouched.
+  let expandingUp = false;
+  expandUp = () => {
+    if (expandingUp || renderWindowStart <= 0) return;
+    expandingUp = true;
+    const from = Math.max(0, renderWindowStart - RENDER_BATCH);
+    const prevHeight = messagesEl.scrollHeight;
+    const frag = document.createDocumentFragment();
+    for (let i = from; i < renderWindowStart; i++) {
+      frag.append(messageEl(messages[i], i, msgPersona, lastAssistant));
+    }
+    messagesEl.prepend(frag);
+    for (let node = messagesEl.firstElementChild, n = renderWindowStart - from; node && n > 0; node = node.nextElementSibling, n--) {
+      messagesResizeObserver.observe(node, { box: 'border-box' });
+    }
+    renderWindowStart = from;
+    messagesEl.scrollTop += messagesEl.scrollHeight - prevHeight;
+    lastScrollTop = messagesEl.scrollTop;
+    expandingUp = false;
+  };
 
   // Input bar — auto-grows with content from a user-resizable base height
   // (drag the handle above the bar; double-click resets)
@@ -2229,13 +2274,30 @@ function searchRow(title, text, q, onclick) {
 }
 
 function jumpToMessage(index) {
-  const target = document.querySelector(`#messages [data-index="${index}"]`);
+  let target = document.querySelector(`#messages [data-index="${index}"]`);
+  if (!target && index >= 0 && index < renderWindowStart) {
+    // The hit is above the rendered window (windowed rendering) — widen the
+    // window to include it, with some context above, then re-render.
+    renderWindowStart = Math.max(0, index - 20);
+    renderChat();
+    target = document.querySelector(`#messages [data-index="${index}"]`);
+  }
   if (target) {
     // The post-render settle loop pins the view to the bottom while following;
     // a search jump is an explicit navigation — stop following first or the
     // pin can yank the target back down before the scroll lands.
     followingBottom = false;
     target.scrollIntoView({ block: 'center' });
+    // content-visibility resolves real heights only as regions come into
+    // view: the first jump into a far part of a long chat lands on estimated
+    // coordinates, then everything above re-sizes and shifts the target.
+    // Re-align after layout settles (twice — estimates can cascade).
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        target.scrollIntoView({ block: 'center' });
+        setTimeout(() => target.scrollIntoView({ block: 'center' }), 120);
+      })
+    );
     target.style.outline = '2px solid var(--accent)';
     target.style.borderRadius = '12px';
     setTimeout(() => {

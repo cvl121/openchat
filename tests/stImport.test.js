@@ -149,7 +149,7 @@ test('importSTFolder imports all categories, reports failures, keeps going', asy
   assert.equal(res.imported.chats, 2);
   const aliceChats = listChats('Alice');
   assert.equal(aliceChats.length, 1);
-  const chat = loadChat('Alice', aliceChats[0].file);
+  const chat = await loadChat('Alice', aliceChats[0].file);
   assert.equal(chat.messages.length, 2);
   assert.deepEqual(chat.messages[1].swipes, ['hi', 'hey']);
   assert.equal(chat.messages[1].swipe_id, 1);
