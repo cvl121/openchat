@@ -129,8 +129,13 @@ test('scanSTFolder counts every category', () => {
   assert.deepEqual(scan.counts, { characters: 2, chats: 2, lorebooks: 1, personas: 2, presets: 2 });
 });
 
-test('importSTFolder imports all categories, reports failures, keeps going', () => {
-  const res = importSTFolder(userDir, { categories: ALL });
+test('importSTFolder imports all categories, reports failures, keeps going', async () => {
+  const ticks = [];
+  const res = await importSTFolder(userDir, { categories: ALL, onProgress: (p) => ticks.push(p) });
+  // Progress fires once per file-backed item with a stable total
+  assert.ok(ticks.length > 0);
+  assert.ok(ticks.every((p) => p.total === ticks[0].total && p.done >= 1 && p.done <= p.total));
+  assert.equal(ticks.at(-1).done, ticks[0].total);
 
   assert.equal(res.imported.characters, 1);
   assert.equal(res.skipped.characters, 1); // broken.png
@@ -179,8 +184,8 @@ test('importSTFolder imports all categories, reports failures, keeps going', () 
   assert.equal(creative2.generationParams.temperature, 0.5);
 });
 
-test('re-import keeps both: originals untouched, imports suffixed', () => {
-  const res = importSTFolder(userDir, { categories: ALL });
+test('re-import keeps both: originals untouched, imports suffixed', async () => {
+  const res = await importSTFolder(userDir, { categories: ALL });
   assert.equal(res.imported.characters, 1);
 
   // Character file suffixed, original card intact
@@ -202,23 +207,23 @@ test('re-import keeps both: originals untouched, imports suffixed', () => {
   assert.equal(listChats('Alice').length, 2);
 });
 
-test('lorebook name collision with an existing file basename is avoided', () => {
+test('lorebook name collision with an existing file basename is avoided', async () => {
   // A local book whose FILE is Solo.json but whose NAME is different
   saveWorldInfo({ name: 'Something Else', file: 'Solo.json', entries: [] });
   const soloDir = path.join(fixtures, 'solo-st');
   write(soloDir, 'worlds/Solo.json', JSON.stringify({ name: 'Solo', entries: {} }));
   write(soloDir, 'characters/.keep', ''); // make it look like a user dir
-  importSTFolder(soloDir, { categories: { lorebooks: true } });
+  await importSTFolder(soloDir, { categories: { lorebooks: true } });
   const before = listWorldInfo().find((b) => b.file === 'Solo.json');
   assert.equal(before.name, 'Something Else'); // not overwritten
   assert.ok(listWorldInfo().some((b) => b.name === 'Solo 2'));
 });
 
-test('category filtering imports only what is checked', () => {
+test('category filtering imports only what is checked', async () => {
   const tmp2 = fs.mkdtempSync(path.join(os.tmpdir(), 'openchat-stimport2-'));
   initStorage(tmp2);
   try {
-    const res = importSTFolder(userDir, { categories: { characters: true } });
+    const res = await importSTFolder(userDir, { categories: { characters: true } });
     assert.equal(res.imported.characters, 1);
     assert.equal(res.imported.chats + res.imported.lorebooks + res.imported.personas + res.imported.presets, 0);
     assert.equal(listWorldInfo().length, 0);

@@ -181,6 +181,7 @@ export const en = {
   'chat.chatDeleted': 'Chat deleted',
   'chat.chatExported': 'Chat exported',
   'chat.chatImported': 'Chat imported',
+  'chat.chatImportedSkipped': 'Chat imported — {count} malformed lines skipped',
   'chat.filterChatJSONL': 'Chat JSONL',
 
   // Export modal
@@ -505,6 +506,8 @@ export const en = {
   'settings.nothingSelected': 'Nothing selected',
   'settings.stImported': 'Imported {parts}',
   'settings.stImportFailures': ' — {count} items failed',
+  'settings.stImportFailuresTitle': 'Import problems',
+  'errors.skippedLines': '{count} malformed lines skipped',
 
   // Developer section
   'settings.developerLog': 'Developer Log',

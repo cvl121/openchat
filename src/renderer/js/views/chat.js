@@ -400,7 +400,14 @@ async function maybeAutoTitle(run) {
 // resending the full history.
 
 const COMPRESS_KEEP_RECENT = 16; // newest messages always sent verbatim
-const COMPRESS_CONTEXT_FRACTION = 0.5; // also compress when history outgrows this share of the context
+const COMPRESS_CONTEXT_FRACTION = 0.5; // also compress when the backlog outgrows this share of the context
+const COMPRESS_MIN_BATCH = 4; // never spin up a call to fold fewer messages than this
+// The transcript itself must fit the summarizer (it IS the chat model): cap
+// each pass at this share of its context; a bigger backlog — e.g. a freshly
+// imported SillyTavern chat with no summary yet — folds in over successive
+// replies, one batch at a time.
+const COMPRESS_INPUT_FRACTION = 0.4;
+const COMPRESS_INPUT_FALLBACK_TOKENS = 8192; // when the context size is unknown/unlimited
 let compressing = false;
 
 async function maybeCompressChat(chat, charName) {
@@ -412,23 +419,37 @@ async function maybeCompressChat(chat, charName) {
   const config = apiConfig(chat.metadata.model);
   // Message count alone under-triggers on long messages: a handful of big
   // turns can fill a small context and start silently trimming. Also compress
-  // once the uncompressed history outgrows half the model's context window
+  // once the compressible backlog outgrows half the model's context window
   // (known from the model-list cache; the manual setting is the fallback).
   const p = config.params;
   const autoCtx = (p.context_size_auto ?? true) ? knownModelContext(config.provider, config.model) : 0;
   const contextSize = autoCtx > 0 ? autoCtx : p.context_size;
-  const historyTokens = chat.messages
-    .slice(start)
-    .reduce((sum, m) => sum + estimateTokens(m.mes ?? ''), 0);
-  const overTokenBudget = contextSize > 0 && historyTokens > contextSize * COMPRESS_CONTEXT_FRACTION;
-  if (chat.messages.length - start <= threshold && !overTokenBudget) return;
   const end = chat.messages.length - COMPRESS_KEEP_RECENT;
-  if (end <= start) return;
+  if (end - start < COMPRESS_MIN_BATCH) return;
+  // Measure only the compressible region: the recent tail is always sent
+  // verbatim, so counting it would keep re-triggering a pointless tiny
+  // compression every turn once the tail alone exceeds the budget.
+  const backlogTokens = chat.messages
+    .slice(start, end)
+    .reduce((sum, m) => sum + messageTokens(m), 0);
+  const overTokenBudget = contextSize > 0 && backlogTokens > contextSize * COMPRESS_CONTEXT_FRACTION;
+  if (chat.messages.length - start <= threshold && !overTokenBudget) return;
 
   compressing = true;
   const chatRef = chat;
   try {
-    const slice = chat.messages.slice(start, end);
+    // Cap the transcript to what the summarizer can actually read
+    const inputBudget =
+      contextSize > 0
+        ? Math.max(2048, Math.floor(contextSize * COMPRESS_INPUT_FRACTION))
+        : COMPRESS_INPUT_FALLBACK_TOKENS;
+    let batchEnd = start;
+    for (let used = 0; batchEnd < end; batchEnd++) {
+      const cost = messageTokens(chat.messages[batchEnd]);
+      if (batchEnd > start && used + cost > inputBudget) break;
+      used += cost;
+    }
+    const slice = chat.messages.slice(start, batchEnd);
     const prior = chat.metadata.summary?.text;
     const transcript = slice.map((m) => `${m.name}: ${m.mes}`).join('\n\n');
     const request = [
@@ -441,7 +462,7 @@ async function maybeCompressChat(chat, charName) {
       },
     ];
     config.params.max_tokens = Math.min(1024, config.params.max_tokens || 1024);
-    devLog('INFO', `compressing ${slice.length} older messages (${overTokenBudget ? `~${historyTokens} tokens > ${Math.round(COMPRESS_CONTEXT_FRACTION * 100)}% of ${contextSize}-token context` : `threshold ${threshold}`})…`);
+    devLog('INFO', `compressing ${slice.length}/${end - start} older messages (${overTokenBudget ? `~${backlogTokens}-token backlog > ${Math.round(COMPRESS_CONTEXT_FRACTION * 100)}% of ${contextSize}-token context` : `threshold ${threshold}`})…`);
     const text = (await window.tavern.llm.complete(request, config))?.trim();
     if (!text) return;
     // If the user reopened this conversation mid-flight, state.currentChat is
@@ -453,10 +474,10 @@ async function maybeCompressChat(chat, charName) {
       state.selectedCharacter?.card.data.name === charName;
     const target = reopened ? state.currentChat : chatRef;
     if (runForChat(target)) return; // a generation started meanwhile — don't clobber its rewrite
-    if (target.messages.length < end) return; // messages were deleted meanwhile
-    target.metadata.summary = { text, upToIndex: end };
+    if (target.messages.length < batchEnd) return; // messages were deleted meanwhile
+    target.metadata.summary = { text, upToIndex: batchEnd };
     await persistChatMetadataFor(charName, target);
-    devLog('INFO', `compressed ${end - start} messages into a ~${estimateTokens(text)}-token summary`);
+    devLog('INFO', `compressed ${batchEnd - start} messages into a ~${estimateTokens(text)}-token summary`);
     if (target === state.currentChat && state.view === 'chat' && !isCurrentChatGenerating()) renderChat();
   } catch (err) {
     devLog('ERR', `chat compression failed: ${err.message}`);
@@ -802,7 +823,11 @@ export function renderChat({ scrollBottom = false } = {}) {
 
   const messagesEl = el('div', { id: 'messages' });
   const messages = state.currentChat?.messages ?? [];
-  messages.forEach((msg, index) => messagesEl.append(messageEl(msg, index)));
+  // Per-message context computed once: activePersona scans the persona list
+  // and lastAssistantIndex scans the tail — O(n²) over a long chat otherwise
+  const msgPersona = activePersona();
+  const lastAssistant = lastAssistantIndex();
+  messages.forEach((msg, index) => messagesEl.append(messageEl(msg, index, msgPersona, lastAssistant)));
   if (notice.error) {
     messagesEl.append(
       el(
@@ -858,8 +883,19 @@ export function renderChat({ scrollBottom = false } = {}) {
   // the view: streamed text, attachment images finishing their async load,
   // and content-visibility re-estimating offscreen sizes all land here.
   messagesResizeObserver?.disconnect();
+  // Coalesced to one scroll write per frame, and skipped when already at the
+  // bottom: scrollTop writes change which messages are visible, which changes
+  // content-visibility size estimates, which fires resizes — an unthrottled
+  // callback turns that into a resize↔scroll feedback loop on long chats.
+  let resizeScrollQueued = false;
   messagesResizeObserver = new ResizeObserver(() => {
-    if (followingBottom) scrollToBottom(true);
+    if (!followingBottom || resizeScrollQueued) return;
+    resizeScrollQueued = true;
+    requestAnimationFrame(() => {
+      resizeScrollQueued = false;
+      if (!followingBottom) return;
+      if (messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight > 1) scrollToBottom(true);
+    });
   });
   for (const child of messagesEl.children) messagesResizeObserver.observe(child, { box: 'border-box' });
 
@@ -1136,9 +1172,12 @@ function attachmentStrip(msg) {
               alt: a.name,
               title: t('chat.attachmentView', { name: a.name }),
               onclick: () => openImageViewer(a),
-              // Images load after the scroll position is set and grow the
-              // message under the viewport — re-anchor unless the user
-              // deliberately scrolled away.
+              // Lazy: a chat with hundreds of generated images must not fetch
+              // and decode them all on open. Images load after the scroll
+              // position is set and grow the message under the viewport — the
+              // resize observer re-anchors unless the user scrolled away.
+              loading: 'lazy',
+              decoding: 'async',
             }),
             el('button', {
               class: 'btn-icon img-save-btn',
@@ -1154,9 +1193,8 @@ function attachmentStrip(msg) {
   );
 }
 
-function messageEl(msg, index) {
+function messageEl(msg, index, persona = activePersona(), lastAssistant = lastAssistantIndex()) {
   const isUser = !!msg.is_user;
-  const persona = activePersona();
   const av = isUser
     ? avatar(personaAvatarURL(persona), msg.name, 34)
     : avatar(avatarURL(state.selectedCharacter), msg.name, 34);
@@ -1175,7 +1213,7 @@ function messageEl(msg, index) {
     if (!msg.__streaming && !isCurrentChatGenerating()) editMessage(msg, index);
   });
 
-  const isLastAssistant = !isUser && index === lastAssistantIndex();
+  const isLastAssistant = !isUser && index === lastAssistant;
   const actions = el(
     'div',
     { class: 'msg-actions' },
@@ -1314,12 +1352,27 @@ async function stageFileObject(file) {
 /**
  * Copy history messages, resolving upload attachments into prompt-ready data
  * (images → data URLs, text files → contents). Cached per upload file.
+ * Messages that cannot survive context trimming skip resolution entirely:
+ * reading and base64-encoding images that will be dropped costs disk reads,
+ * IPC copies, and LRU churn on every send. Twice the window is a conservative
+ * bound — attachments only ever ADD tokens, so anything past it is trimmed
+ * either way.
  */
-async function resolveAttachments(messages) {
+async function resolveAttachments(messages, contextSize = 0) {
+  let cutoff = 0; // oldest index whose attachments still get resolved
+  if (contextSize > 0) {
+    let tokens = 0;
+    cutoff = messages.length;
+    while (cutoff > 0 && tokens < contextSize * 2) {
+      tokens += estimateTokens(messages[cutoff - 1].mes ?? '');
+      cutoff--;
+    }
+  }
   const out = [];
-  for (const m of messages) {
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
     const attachments = m.extra?.attachments;
-    if (!attachments?.length) {
+    if (!attachments?.length || i < cutoff) {
       out.push(m);
       continue;
     }
@@ -1454,7 +1507,7 @@ async function generateResponse({
   const summaryStart = Math.min(chat.metadata.summary?.upToIndex ?? 0, chat.messages.length);
   const fullHistory = historyUpTo === null ? chat.messages : chat.messages.slice(0, historyUpTo);
   const history = fullHistory.slice(Math.min(summaryStart, fullHistory.length));
-  const chatHistory = await resolveAttachments(history.filter((m) => !m.__streaming));
+  const chatHistory = await resolveAttachments(history.filter((m) => !m.__streaming), config.params.context_size);
   const stats = {};
   const prompt = buildMessages({
     character: character.card.data,
@@ -1727,7 +1780,8 @@ async function impersonate() {
   const summary = state.currentChat.metadata.summary?.text ?? '';
   const summaryStart = Math.min(state.currentChat.metadata.summary?.upToIndex ?? 0, state.currentChat.messages.length);
   const chatHistory = await resolveAttachments(
-    state.currentChat.messages.slice(summaryStart).filter((m) => !m.__streaming)
+    state.currentChat.messages.slice(summaryStart).filter((m) => !m.__streaming),
+    config.params.context_size
   );
   const prompt = buildMessages({
     character,
@@ -2075,8 +2129,8 @@ async function importChatFile(charName) {
   });
   if (!files?.[0]) return false;
   try {
-    const file = await window.tavern.chats.import(charName, files[0]);
-    toast(t('chat.chatImported'), 'ok');
+    const { file, badLines } = await window.tavern.chats.import(charName, files[0]);
+    toast(badLines ? t('chat.chatImportedSkipped', { count: badLines }) : t('chat.chatImported'), badLines ? 'info' : 'ok');
     if (isChatMode()) await refreshConversations();
     await loadChat(file);
     return true;
@@ -2107,9 +2161,13 @@ export function openSearch(initialQuery = '', initialScope = 'current') {
     if (scope.value === 'current' && state.currentChat) {
       const matches = [];
       const folded = foldText(q);
-      state.currentChat.messages.forEach((m, index) => {
+      const messages = state.currentChat.messages;
+      // Same cap as global search: a common word in a huge chat would
+      // otherwise build thousands of result rows in one synchronous pass
+      for (let index = 0; index < messages.length && matches.length < 200; index++) {
+        const m = messages[index];
         if (foldText(m.mes ?? '').includes(folded)) matches.push({ m, index });
-      });
+      }
       if (!matches.length) results.append(el('p', { style: { color: 'var(--text-dim)' } }, t('common.noMatches')));
       for (const { m, index } of matches) {
         results.append(
@@ -2173,6 +2231,10 @@ function searchRow(title, text, q, onclick) {
 function jumpToMessage(index) {
   const target = document.querySelector(`#messages [data-index="${index}"]`);
   if (target) {
+    // The post-render settle loop pins the view to the bottom while following;
+    // a search jump is an explicit navigation — stop following first or the
+    // pin can yank the target back down before the scroll lands.
+    followingBottom = false;
     target.scrollIntoView({ block: 'center' });
     target.style.outline = '2px solid var(--accent)';
     target.style.borderRadius = '12px';

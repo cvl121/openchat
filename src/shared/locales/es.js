@@ -181,6 +181,7 @@ export const es = {
   'chat.chatDeleted': 'Chat eliminado',
   'chat.chatExported': 'Chat exportado',
   'chat.chatImported': 'Chat importado',
+  'chat.chatImportedSkipped': 'Chat importado — se omitieron {count} líneas malformadas',
   'chat.filterChatJSONL': 'Chat JSONL',
 
   // Export modal
@@ -505,6 +506,8 @@ export const es = {
   'settings.nothingSelected': 'No hay nada seleccionado',
   'settings.stImported': 'Se importaron {parts}',
   'settings.stImportFailures': ' — {count} elementos fallaron',
+  'settings.stImportFailuresTitle': 'Problemas de importación',
+  'errors.skippedLines': 'se omitieron {count} líneas malformadas',
 
   // Developer section
   'settings.developerLog': 'Registro de desarrollador',

@@ -947,3 +947,10 @@ html[lang^='ja'] .msg-content {
   padding: 4px 10px;
   border-left: 2px solid var(--border);
 }
+
+/* Big world-book editors: skip layout/paint for offscreen entry cards
+   (a 1000-entry imported lorebook builds one card each). */
+.modal-overlay .card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 240px;
+}

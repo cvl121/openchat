@@ -266,10 +266,19 @@ export function devLog(type, message) {
   document.dispatchEvent(new CustomEvent('devlog-updated'));
 }
 
+// Depth-capped AND byte-capped: each snapshot is a full copy of the chat, so
+// ten snapshots of a 20 MB conversation would quietly retain 200 MB.
+const UNDO_MAX_DEPTH = 10;
+const UNDO_MAX_BYTES = 50 * 1024 * 1024;
+
 export function pushUndo() {
   if (!state.currentChat) return;
   state.undoStack.push(JSON.stringify(state.currentChat.messages));
-  if (state.undoStack.length > 10) state.undoStack.shift();
+  if (state.undoStack.length > UNDO_MAX_DEPTH) state.undoStack.shift();
+  let bytes = state.undoStack.reduce((sum, s) => sum + s.length, 0);
+  while (state.undoStack.length > 1 && bytes > UNDO_MAX_BYTES) {
+    bytes -= state.undoStack.shift().length;
+  }
 }
 
 export function popUndo() {

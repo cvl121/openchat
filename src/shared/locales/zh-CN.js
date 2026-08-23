@@ -181,6 +181,7 @@ export const zhCN = {
   'chat.chatDeleted': '聊天已删除',
   'chat.chatExported': '聊天已导出',
   'chat.chatImported': '聊天已导入',
+  'chat.chatImportedSkipped': '聊天已导入 — 已跳过 {count} 行格式错误的内容',
   'chat.filterChatJSONL': '聊天 JSONL',
 
   // Export modal
@@ -505,6 +506,8 @@ export const zhCN = {
   'settings.nothingSelected': '未选择任何内容',
   'settings.stImported': '已导入{parts}',
   'settings.stImportFailures': ' — {count} 项失败',
+  'settings.stImportFailuresTitle': '导入问题',
+  'errors.skippedLines': '已跳过 {count} 行格式错误的内容',
 
   // Developer section
   'settings.developerLog': '开发者日志',

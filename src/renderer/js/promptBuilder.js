@@ -34,21 +34,29 @@ function tokensOf(m) {
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
- * Whole-word regex for a keyword. \b is only meaningful next to ASCII word
- * characters, so it is applied per edge — keys with CJK or punctuation edges
- * fall back to plain substring matching on that edge (a fully-CJK key
- * degrades to exact substring, which is the right behavior for CJK).
+ * Whole-word regex for a keyword, memoized per needle — books can carry
+ * thousands of keys and this runs on every send. \b is only meaningful next
+ * to ASCII word characters, so it is applied per edge — keys with CJK or
+ * punctuation edges fall back to plain substring matching on that edge (a
+ * fully-CJK key degrades to exact substring, which is right for CJK).
  */
+const wordReCache = new Map();
 function wordRe(needle) {
-  const lead = /^[A-Za-z0-9_]/.test(needle) ? '\\b' : '';
-  const trail = /[A-Za-z0-9_]$/.test(needle) ? '\\b' : '';
-  return new RegExp(lead + escapeRe(needle) + trail);
+  let re = wordReCache.get(needle);
+  if (!re) {
+    const lead = /^[A-Za-z0-9_]/.test(needle) ? '\\b' : '';
+    const trail = /[A-Za-z0-9_]$/.test(needle) ? '\\b' : '';
+    re = new RegExp(lead + escapeRe(needle) + trail);
+    if (wordReCache.size < 10000) wordReCache.set(needle, re);
+  }
+  return re;
 }
 
-function keywordMatches(entry, recentText) {
+/** scan = {raw, lower} — lowered once per scan text, not once per entry. */
+function keywordMatches(entry, scan) {
   const caseSensitive = entry.case_sensitive ?? false;
   const whole = (entry.match_whole_words ?? entry.extensions?.match_whole_words) === true;
-  const haystack = caseSensitive ? recentText : recentText.toLowerCase();
+  const haystack = caseSensitive ? scan.raw : scan.lower;
   const hit = (key) => {
     const needle = caseSensitive ? key : key.toLowerCase();
     if (!needle) return false;
@@ -114,14 +122,13 @@ export function buildMessages({
   const scanCache = new Map();
   const scanText = (depth) => {
     if (!scanCache.has(depth)) {
-      scanCache.set(
-        depth,
+      const raw =
         (summary ? `${summary} ` : '') +
-          chatHistory
-            .slice(-depth)
-            .map((m) => m.mes ?? '')
-            .join(' ')
-      );
+        chatHistory
+          .slice(-depth)
+          .map((m) => m.mes ?? '')
+          .join(' ');
+      scanCache.set(depth, { raw, lower: raw.toLowerCase() });
     }
     return scanCache.get(depth);
   };

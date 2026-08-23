@@ -181,6 +181,7 @@ export const ja = {
   'chat.chatDeleted': 'チャットを削除しました',
   'chat.chatExported': 'チャットをエクスポートしました',
   'chat.chatImported': 'チャットをインポートしました',
+  'chat.chatImportedSkipped': 'チャットをインポートしました — 不正な行を{count}件スキップしました',
   'chat.filterChatJSONL': 'チャットJSONL',
 
   // Export modal
@@ -505,6 +506,8 @@ export const ja = {
   'settings.nothingSelected': '何も選択されていません',
   'settings.stImported': '{parts}をインポートしました',
   'settings.stImportFailures': ' — {count}件の項目が失敗しました',
+  'settings.stImportFailuresTitle': 'インポートの問題',
+  'errors.skippedLines': '不正な行を{count}件スキップしました',
 
   // Developer section
   'settings.developerLog': '開発者ログ',

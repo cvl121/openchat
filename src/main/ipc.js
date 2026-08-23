@@ -288,7 +288,20 @@ export function registerIPC() {
   // inside the picked folder; that subdir stays minted via the prefix rule,
   // so the renderer can pass it straight back to st:import.
   ipcMain.handle('st:scan', wrap((dir) => stImport.scanSTFolder(assertMinted(dir))));
-  ipcMain.handle('st:import', wrap((dir, categories) => stImport.importSTFolder(assertMinted(dir), { categories })));
+  ipcMain.handle('st:import', async (event, dir, categories) => {
+    const sender = event.sender;
+    try {
+      const data = await stImport.importSTFolder(assertMinted(dir), {
+        categories,
+        onProgress: (p) => {
+          if (!sender.isDestroyed()) sender.send('st:progress', p);
+        },
+      });
+      return { ok: true, data };
+    } catch (err) {
+      return { ok: false, error: err.message ?? String(err) };
+    }
+  });
 
   // Manual update check (Settings → General). Deliberately ignores the
   // skipped version — an explicit check should always report what's newest.

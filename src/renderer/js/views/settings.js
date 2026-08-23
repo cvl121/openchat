@@ -6,7 +6,7 @@
 // full sampler customization, presets, prompt overrides, base URLs, and the
 // developer log.
 
-import { el, clear, toast, confirmDialog, estimateTokens, formatModelPricing } from '../util.js';
+import { el, clear, toast, confirmDialog, modal, estimateTokens, formatModelPricing } from '../util.js';
 import {
   state,
   PROVIDERS,
@@ -1011,8 +1011,12 @@ function renderSTPreview(host, scan) {
       if (!Object.values(selected).some(Boolean)) return toast(t('settings.nothingSelected'), 'error');
       importBtn.disabled = true;
       importBtn.textContent = t('settings.importing');
+      // Live progress from the chunked main-process import (large ST
+      // libraries take a while; the app stays responsive throughout)
+      const offProgress = window.tavern.on('st:progress', ({ done, total }) => {
+        importBtn.textContent = `${t('settings.importing')} ${done}/${total}`;
+      });
       try {
-        // Fast local file copying — a button state is proportionate progress UI
         const res = await window.tavern.sillytavern.import(scan.dir, selected);
         // "Label: count" pairs are plural-agnostic, so they translate cleanly
         const parts = ST_CATEGORIES()
@@ -1021,12 +1025,25 @@ function renderSTPreview(host, scan) {
         const failures = res.errors.length ? t('settings.stImportFailures', { count: res.errors.length }) : '';
         clear(host);
         toast(t('settings.stImported', { parts: parts.join(', ') }) + failures, res.errors.length ? 'error' : 'ok');
+        // The count alone hides WHICH items were dropped — show the list
+        if (res.errors.length) {
+          modal(
+            el('div', {},
+              el('h2', {}, t('settings.stImportFailuresTitle')),
+              el('pre', { style: { whiteSpace: 'pre-wrap', fontSize: '12px', maxHeight: '50vh', overflowY: 'auto' } },
+                res.errors.slice(0, 100).join('\n') + (res.errors.length > 100 ? `\n… +${res.errors.length - 100}` : ''))
+            ),
+            { width: 640 }
+          );
+        }
         await cb.reloadAll?.();
         renderSettings();
       } catch (err) {
         toast(err.message, 'error');
         importBtn.disabled = false;
         importBtn.textContent = t('settings.importSelected');
+      } finally {
+        offProgress?.();
       }
     },
   }, t('settings.importSelected'));

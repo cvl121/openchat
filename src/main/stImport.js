@@ -136,22 +136,39 @@ export function scanSTFolder(pickedDir) {
  * categories = { characters, chats, lorebooks, personas, presets } booleans.
  * Per-item failures land in errors[] and the import keeps going.
  * Returns { imported: {…}, skipped: {…}, errors: ["characters/Foo.png: …"] }.
+ *
+ * Asynchronous and chunked: a full ST library is hundreds of multi-MB files,
+ * so the loop yields to the event loop between items (the window stays
+ * responsive, streams keep flowing) and reports progress via onProgress.
  */
-export function importSTFolder(dir, { categories = {} } = {}) {
+export async function importSTFolder(dir, { categories = {}, onProgress = null } = {}) {
   const res = {
     imported: { characters: 0, chats: 0, lorebooks: 0, personas: 0, presets: 0 },
     skipped: { characters: 0, chats: 0, lorebooks: 0, personas: 0, presets: 0 },
     errors: [],
   };
-  if (categories.characters) importCharacters(dir, res);
-  if (categories.chats) importChats(dir, res);
-  if (categories.lorebooks) importLorebooks(dir, res);
-  if (categories.personas) importPersonas(dir, res);
-  if (categories.presets) importPresets(dir, res);
+  const progress = { done: 0, total: 0, category: '' };
+  const tick = async (category) => {
+    progress.done++;
+    progress.category = category;
+    onProgress?.({ ...progress });
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  if (categories.characters) progress.total += listFiles(path.join(dir, 'characters'), '.png').length;
+  if (categories.chats) {
+    const chatsRoot = path.join(dir, 'chats');
+    progress.total += subdirNames(chatsRoot).reduce((n, sub) => n + listFiles(path.join(chatsRoot, sub), '.jsonl').length, 0);
+  }
+  if (categories.lorebooks) progress.total += listFiles(path.join(dir, 'worlds'), '.json').length;
+  if (categories.characters) await importCharacters(dir, res, tick);
+  if (categories.chats) await importChats(dir, res, tick);
+  if (categories.lorebooks) await importLorebooks(dir, res, tick);
+  if (categories.personas) importPersonas(dir, res); // settings.json only — small
+  if (categories.presets) importPresets(dir, res); // a handful of small files
   return res;
 }
 
-function importCharacters(dir, res) {
+async function importCharacters(dir, res, tick) {
   const src = path.join(dir, 'characters');
   for (const file of listFiles(src, '.png')) {
     try {
@@ -161,6 +178,7 @@ function importCharacters(dir, res) {
       res.skipped.characters++;
       res.errors.push(`characters/${file}: ${err.message}`);
     }
+    await tick('characters');
   }
 }
 
@@ -180,23 +198,27 @@ function chatCharacterName(filePath, fallback) {
   return fallback;
 }
 
-function importChats(dir, res) {
+async function importChats(dir, res, tick) {
   const chatsRoot = path.join(dir, 'chats');
   for (const sub of subdirNames(chatsRoot)) {
     for (const file of listFiles(path.join(chatsRoot, sub), '.jsonl')) {
       const full = path.join(chatsRoot, sub, file);
       try {
-        importChatJSONL(chatCharacterName(full, sub), full); // always writes a fresh unique file
+        // Always writes a fresh unique file; malformed lines are skipped
+        // per-line rather than losing the chat — note them in the report
+        const { badLines } = importChatJSONL(chatCharacterName(full, sub), full);
         res.imported.chats++;
+        if (badLines) res.errors.push(`chats/${sub}/${file}: ${t('errors.skippedLines', { count: badLines })}`);
       } catch (err) {
         res.skipped.chats++;
         res.errors.push(`chats/${sub}/${file}: ${err.message}`);
       }
+      await tick('chats');
     }
   }
 }
 
-function importLorebooks(dir, res) {
+async function importLorebooks(dir, res, tick) {
   const src = path.join(dir, 'worlds');
   // saveWorldInfo overwrites on same name and derives its file from the name,
   // so unique against both existing book names and existing file basenames.
@@ -216,6 +238,7 @@ function importLorebooks(dir, res) {
       res.skipped.lorebooks++;
       res.errors.push(`worlds/${file}: ${err.message}`);
     }
+    await tick('lorebooks');
   }
 }
 

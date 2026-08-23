@@ -130,7 +130,7 @@ test('characters: deleting a character archives its chats away from a future nam
   saveCharacter({ name: 'Ghost' });
   assert.equal(listChats('Ghost').length, 0);
   // The archive is invisible to search and cross-character scans
-  assert.equal(searchChats('old history').length, 0);
+  assert.equal((await searchChats('old history')).length, 0);
 });
 
 test('characters: chats survive deletion while a same-name card remains', async () => {
@@ -141,7 +141,7 @@ test('characters: chats survive deletion while a same-name card remains', async 
   assert.equal(listChats('Twin').length, 1);
 });
 
-test('chats: create, append, rewrite, list, search', () => {
+test('chats: create, append, rewrite, list, search', async () => {
   const chat = createChat('Hero', 'User');
   assert.equal(chat.metadata.character_name, 'Hero');
   appendMessage('Hero', chat.file, { name: 'User', is_user: true, mes: 'Hello world', send_date: '2026-01-01' });
@@ -160,11 +160,11 @@ test('chats: create, append, rewrite, list, search', () => {
   assert.equal(chats.length, 1);
   assert.equal(chats[0].messageCount, 2);
 
-  const hits = searchChats('hello', 'Hero');
+  const hits = await searchChats('hello', 'Hero');
   assert.equal(hits.length, 1);
   assert.equal(hits[0].index, 0);
-  assert.ok(searchChats('hello').length >= 1); // global search
-  assert.equal(searchChats('zzz-no-match').length, 0);
+  assert.ok((await searchChats('hello')).length >= 1); // global search
+  assert.equal((await searchChats('zzz-no-match')).length, 0);
 });
 
 test('personas: default fallback and round-trip', () => {
@@ -308,7 +308,8 @@ test('chats: SillyTavern JSONL import round-trips messages and swipes', () => {
     { name: 'Old Name', is_user: false, mes: 'Well met', send_date: '2025-05-01', swipes: ['Well met', 'Greetings'], swipe_id: 1 },
   ];
   fs.writeFileSync(src, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
-  const file = importChatJSONL('Hero', src);
+  const { file, badLines } = importChatJSONL('Hero', src);
+  assert.equal(badLines, 0);
   const { metadata, messages } = loadChat('Hero', file);
   assert.equal(metadata.character_name, 'Hero'); // rebound to the importing character
   assert.equal(metadata.user_name, 'Traveler');
@@ -320,10 +321,22 @@ test('chats: SillyTavern JSONL import round-trips messages and swipes', () => {
 
   // Headerless files (every line a message) are tolerated
   fs.writeFileSync(src, JSON.stringify({ name: 'X', is_user: true, mes: 'solo line' }) + '\n');
-  const file2 = importChatJSONL('Hero', src);
+  const file2 = importChatJSONL('Hero', src).file;
   assert.equal(loadChat('Hero', file2).messages[0].mes, 'solo line');
 
-  // Malformed files are rejected
+  // A malformed line is skipped and reported; the rest of the chat survives
+  fs.writeFileSync(
+    src,
+    JSON.stringify({ user_name: 'T', character_name: 'C', chat_metadata: {} }) + '\n' +
+      JSON.stringify({ name: 'T', is_user: true, mes: 'kept 1' }) + '\n' +
+      'truncated {"name": "T", "is_us\n' +
+      JSON.stringify({ name: 'C', is_user: false, mes: 'kept 2' }) + '\n'
+  );
+  const tolerant = importChatJSONL('Hero', src);
+  assert.equal(tolerant.badLines, 1);
+  assert.deepEqual(loadChat('Hero', tolerant.file).messages.map((m) => m.mes), ['kept 1', 'kept 2']);
+
+  // Entirely malformed files are still rejected
   fs.writeFileSync(src, 'not json at all\n');
   assert.throws(() => importChatJSONL('Hero', src), /JSONL/);
 });

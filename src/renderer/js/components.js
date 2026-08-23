@@ -11,6 +11,10 @@ export function avatar(url, name, size = 36) {
       width: size,
       height: size,
       alt: name ?? '',
+      // The src is often the full multi-MB character PNG; a big library
+      // would otherwise fetch and decode every card the moment a grid renders
+      loading: 'lazy',
+      decoding: 'async',
     });
     img.addEventListener('error', () => img.replaceWith(initialsAvatar(name, size)));
     img.addEventListener('load', () => {

@@ -503,7 +503,23 @@ export function loadChat(characterName, file) {
 }
 
 export function appendMessage(characterName, file, message) {
-  fs.appendFileSync(path.join(chatsDirFor(characterName), sanitizeFilename(file)), JSON.stringify(message) + '\n');
+  const full = path.join(chatsDirFor(characterName), sanitizeFilename(file));
+  fs.appendFileSync(full, JSON.stringify(message) + '\n');
+  // Update the list cache in place: the sidebar refreshes after every send,
+  // and re-reading a multi-MB file just to bump the count and preview is the
+  // hottest storage path in the app.
+  const cached = chatListCache.get(`${characterName}/${file}`);
+  if (cached) {
+    try {
+      const st = fs.statSync(full);
+      cached.stamp = `${st.mtimeMs}:${st.size}`;
+      cached.entry.messageCount += 1;
+      cached.entry.mtime = st.mtimeMs;
+      cached.entry.preview = truncateChars(message.mes ?? '', 120);
+    } catch {
+      chatListCache.delete(`${characterName}/${file}`);
+    }
+  }
   return true;
 }
 
@@ -516,14 +532,20 @@ export function rewriteChat(characterName, file, metadata, messages) {
 
 export async function deleteChat(characterName, file) {
   await removeFile(path.join(chatsDirFor(characterName), sanitizeFilename(file)));
+  chatListCache.delete(`${characterName}/${file}`);
   return true;
 }
 
 const SEARCH_LIMIT = 200;
+let searchGeneration = 0; // a newer search supersedes any still-running one
 
 /** Search all chats for a character (or all characters if name is null).
- *  Case- and accent-insensitive ("jose" matches "José"). */
-export function searchChats(query, characterName = null) {
+ *  Case- and accent-insensitive ("jose" matches "José"). Asynchronous and
+ *  chunked: the corpus can be arbitrarily large, so the scan yields to the
+ *  event loop between files (streams and other IPC keep flowing) and aborts
+ *  as soon as a newer search starts (searches arrive per keystroke). */
+export async function searchChats(query, characterName = null) {
+  const generation = ++searchGeneration;
   const q = foldText(query);
   const results = [];
   const chatsRoot = path.join(dataDir(), 'chats');
@@ -536,6 +558,8 @@ export function searchChats(query, characterName = null) {
     if (!fs.existsSync(dirPath)) continue;
     for (const file of fs.readdirSync(dirPath)) {
       if (!file.endsWith('.jsonl')) continue;
+      await new Promise((resolve) => setImmediate(resolve));
+      if (generation !== searchGeneration) return results; // superseded
       try {
         const { metadata, messages } = loadChat(dir, file);
         for (let index = 0; index < messages.length; index++) {
@@ -590,11 +614,12 @@ function snippetAround(text, q) {
 
 export function exportChatMarkdown(characterName, file, destPath) {
   const { metadata, messages } = loadChat(characterName, file);
-  let md = `# ${metadata.character_name ?? characterName}\n\n`;
+  // Array + join, not += — string concat over a huge chat is quadratic
+  const parts = [`# ${metadata.character_name ?? characterName}\n\n`];
   for (const m of messages) {
-    md += `**${m.name}** (${m.send_date ?? ''})\n\n${m.mes}\n\n---\n\n`;
+    parts.push(`**${m.name}** (${m.send_date ?? ''})\n\n${m.mes}\n\n---\n\n`);
   }
-  fs.writeFileSync(destPath, md);
+  fs.writeFileSync(destPath, parts.join(''));
   return true;
 }
 
@@ -614,21 +639,32 @@ export function importChatJSONL(characterName, sourcePath) {
     .split('\n')
     .filter((l) => l.trim());
   if (!rawLines.length) throw new Error(t('errors.chatFileEmpty'));
-  const parsed = rawLines.map((line, i) => {
+  // Tolerate malformed lines instead of discarding the whole chat: truncated
+  // or interrupted files are common in large SillyTavern exports, and one bad
+  // line shouldn't cost the other thousand messages.
+  const parsed = [];
+  let badLines = 0;
+  for (const line of rawLines) {
     try {
-      return JSON.parse(line);
+      parsed.push(JSON.parse(line));
     } catch {
-      throw new Error(t('errors.notJSONLLine', { line: i + 1 }));
+      badLines++;
     }
-  });
+  }
+  if (!parsed.length) throw new Error(t('errors.notJSONLLine', { line: 1 }));
   let header = parsed[0];
   let messageLines = parsed.slice(1);
   if (typeof header !== 'object' || header === null || header.mes !== undefined) {
     messageLines = parsed;
     header = {};
   }
-  const messages = messageLines.map((m, i) => {
-    if (typeof m?.mes !== 'string') throw new Error(t('errors.notJSONLNoText', { line: i + 2 }));
+  messageLines = messageLines.filter((m) => {
+    if (typeof m?.mes === 'string') return true;
+    badLines++;
+    return false;
+  });
+  if (!messageLines.length) throw new Error(t('errors.notJSONLNoText', { line: 2 }));
+  const messages = messageLines.map((m) => {
     const out = {
       name: m.name ?? (m.is_user ? header.user_name ?? 'User' : characterName),
       is_user: !!m.is_user,
@@ -654,7 +690,7 @@ export function importChatJSONL(characterName, sourcePath) {
   };
   const lines = [JSON.stringify(metadata), ...messages.map((m) => JSON.stringify(m))];
   writeFileAtomic(path.join(dir, file), lines.join('\n') + '\n');
-  return file;
+  return { file, badLines };
 }
 
 // ---------------------------------------------------------------------------
@@ -719,7 +755,14 @@ export async function deleteWorldInfo(file) {
 
 /** Write a world book to destPath in SillyTavern world-info JSON format. */
 export function exportWorldInfo(file, destPath) {
-  const book = listWorldInfo().find((b) => b.file === sanitizeFilename(file));
+  // Read just the requested book — listWorldInfo() would parse every book
+  let book = null;
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(worldsDir(), sanitizeFilename(file)), 'utf8'));
+    let entries = raw.entries ?? [];
+    if (!Array.isArray(entries)) entries = Object.values(entries);
+    book = { name: raw.name ?? path.basename(file, '.json'), entries: entries.map(normalizeWorldEntry) };
+  } catch {}
   if (!book) throw new Error(t('errors.worldBookNotFound', { file }));
   const entries = {};
   book.entries.forEach((e, i) => {

@@ -160,22 +160,34 @@ function openBookEditor(book) {
       );
     }
 
-    content.append(el('h3', { style: { margin: '14px 0 8px' } }, t('worlds.entries', { count: draft.entries.length })));
-    draft.entries.forEach((entry, index) => {
-      content.append(
-        loreEntryCard(entry, () => {
-          draft.entries.splice(index, 1);
-          rerender();
-        })
-      );
-    });
+    // Adds and deletes touch only their own card — an imported SillyTavern
+    // book can hold a thousand entries, and a full rebuild per click would
+    // reconstruct every card (and lose in-progress edits' scroll position).
+    const entriesHeading = el('h3', { style: { margin: '14px 0 8px' } });
+    const syncHeading = () =>
+      (entriesHeading.textContent = t('worlds.entries', { count: draft.entries.length }));
+    syncHeading();
+    const entriesHost = el('div', {});
+    const addEntryCard = (entry) => {
+      const card = loreEntryCard(entry, () => {
+        const i = draft.entries.indexOf(entry);
+        if (i !== -1) draft.entries.splice(i, 1);
+        card.remove();
+        syncHeading();
+      });
+      entriesHost.append(card);
+    };
+    content.append(entriesHeading, entriesHost);
+    draft.entries.forEach(addEntryCard);
 
     content.append(
       el('button', {
         class: 'btn',
         onclick: () => {
-          draft.entries.push(newLoreEntry());
-          rerender();
+          const entry = newLoreEntry();
+          draft.entries.push(entry);
+          addEntryCard(entry);
+          syncHeading();
         },
       }, t('worlds.addEntry')),
       el('div', { class: 'modal-actions' },

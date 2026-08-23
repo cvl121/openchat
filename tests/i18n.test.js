@@ -71,3 +71,20 @@ test('truncateChars: never splits surrogate pairs', () => {
   assert.equal(truncateChars('abc', 10), 'abc');
   assert.equal(truncateChars('', 5), '');
 });
+
+test('foldText: ASCII fast path and per-char memo match the reference fold', () => {
+  // Reference: the original per-character implementation
+  const ref = (s) => {
+    let out = '';
+    for (const ch of String(s ?? '').toLowerCase()) {
+      const base = ch.normalize('NFD').replace(/[̀-ͯ]/g, '');
+      out += base.length === ch.length ? base : ch;
+    }
+    return out;
+  };
+  const samples = ['plain ascii only', 'José MÜLLER café', 'ばは ガガ 日本語', 'Ёлка ПРИВЕТ', '😀 𠀀 mixed Café', ''];
+  for (const s of samples) {
+    assert.equal(foldText(s), ref(s), JSON.stringify(s));
+    assert.equal(foldText(s).length, s.toLowerCase().length, `length-preserving: ${JSON.stringify(s)}`);
+  }
+});

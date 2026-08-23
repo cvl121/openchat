@@ -35,6 +35,9 @@ export function readChunks(buf) {
   let pos = 8;
   while (pos + 12 <= buf.length) {
     const dataLen = buf.readUInt32BE(pos);
+    // A corrupt length would silently yield a truncated subarray and a
+    // desynced walk over the rest of the file — fail loudly instead
+    if (pos + 12 + dataLen > buf.length) throw new Error(t('errors.notPNG'));
     const type = buf.toString('ascii', pos + 4, pos + 8);
     const data = buf.subarray(pos + 8, pos + 8 + dataLen);
     chunks.push({ type, data, offset: pos, length: dataLen + 12 });
@@ -131,7 +134,18 @@ export function normalizeCard(json) {
 
 /** Parse a TavernCardV2 from a character PNG. Tries "chara" then "ccv3" keywords. */
 export function parseCharacterCard(buf) {
-  const text = readTextChunk(buf, 'chara') ?? readTextChunk(buf, 'ccv3');
+  // One chunk walk for both keywords — the walk reads the whole (multi-MB) file
+  let chara = null;
+  let ccv3 = null;
+  for (const chunk of readChunks(buf)) {
+    if (chunk.type !== 'tEXt') continue;
+    const sep = chunk.data.indexOf(0);
+    if (sep === -1) continue;
+    const key = chunk.data.toString('latin1', 0, sep);
+    if (key === 'chara' && chara === null) chara = chunk.data.toString('latin1', sep + 1);
+    else if (key === 'ccv3' && ccv3 === null) ccv3 = chunk.data.toString('latin1', sep + 1);
+  }
+  const text = chara ?? ccv3;
   if (!text) throw new Error(t('errors.noCardInPNG'));
   const json = JSON.parse(Buffer.from(text, 'base64').toString('utf8'));
   return normalizeCard(json);

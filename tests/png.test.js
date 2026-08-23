@@ -82,3 +82,11 @@ test('normalizeCard handles V2 wrapper and bare data', () => {
   assert.equal(bare.data.name, 'B');
   assert.throws(() => normalizeCard({ not: 'a card' }));
 });
+
+test('readChunks rejects a chunk length that overruns the buffer', () => {
+  const png = minimalPNG();
+  // Corrupt the first chunk's length field to point past the end of the file
+  const evil = Buffer.from(png);
+  evil.writeUInt32BE(0x00ffffff, 8);
+  assert.throws(() => readChunks(evil), /PNG/);
+});

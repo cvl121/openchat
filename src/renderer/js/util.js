@@ -70,10 +70,20 @@ export function relativeDate(iso) {
   return date.toLocaleDateString(currentLocale());
 }
 
+// toLocaleTimeString builds a fresh Intl formatter per call — measurable when
+// a long chat renders one timestamp per message (relativeDate caches likewise)
+let timeFmtCache = null;
+
 export function formatTime(iso) {
   const date = new Date(iso);
   if (isNaN(date)) return '';
-  return date.toLocaleTimeString(currentLocale(), { hour: 'numeric', minute: '2-digit' });
+  if (timeFmtCache?.locale !== currentLocale()) {
+    timeFmtCache = {
+      locale: currentLocale(),
+      fmt: new Intl.DateTimeFormat(currentLocale(), { hour: 'numeric', minute: '2-digit' }),
+    };
+  }
+  return timeFmtCache.fmt.format(date);
 }
 
 /** Replace {{char}} / {{user}} template variables (SillyTavern convention). */

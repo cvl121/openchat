@@ -17,11 +17,23 @@ export function truncateChars(s, n) {
  * Latin combining marks are stripped — kana voicing marks (ば vs は) and other
  * scripts are left alone.
  */
-export function foldText(s) {
-  let out = '';
-  for (const ch of String(s ?? '').toLowerCase()) {
+const NON_ASCII_RE = /[^\x00-\x7f]/;
+const FOLD_CACHE = new Map(); // per-code-point fold results (unique chars are few)
+
+function foldChar(ch) {
+  let folded = FOLD_CACHE.get(ch);
+  if (folded === undefined) {
     const base = ch.normalize('NFD').replace(/[̀-ͯ]/g, '');
-    out += base.length === ch.length ? base : ch;
+    folded = base.length === ch.length ? base : ch;
+    if (FOLD_CACHE.size < 20000) FOLD_CACHE.set(ch, folded);
   }
-  return out;
+  return folded;
+}
+
+export function foldText(s) {
+  const lower = String(s ?? '').toLowerCase();
+  // ASCII text needs no folding at all — this is the common case for entire
+  // English chat corpora, and search scans megabytes of it per keystroke
+  if (!NON_ASCII_RE.test(lower)) return lower;
+  return lower.replace(/[^\x00-\x7f]/gu, foldChar);
 }
