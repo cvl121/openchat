@@ -72,19 +72,13 @@ test('truncateChars: never splits surrogate pairs', () => {
   assert.equal(truncateChars('', 5), '');
 });
 
-test('foldText: ASCII fast path and per-char memo match the reference fold', () => {
-  // Reference: the original per-character implementation
-  const ref = (s) => {
-    let out = '';
-    for (const ch of String(s ?? '').toLowerCase()) {
-      const base = ch.normalize('NFD').replace(/[̀-ͯ]/g, '');
-      out += base.length === ch.length ? base : ch;
-    }
-    return out;
-  };
-  const samples = ['plain ascii only', 'José MÜLLER café', 'ばは ガガ 日本語', 'Ёлка ПРИВЕТ', '😀 𠀀 mixed Café', ''];
-  for (const s of samples) {
-    assert.equal(foldText(s), ref(s), JSON.stringify(s));
-    assert.equal(foldText(s).length, s.toLowerCase().length, `length-preserving: ${JSON.stringify(s)}`);
-  }
+test('foldText: ASCII fast path, Cyrillic marks, and astral chars', () => {
+  // ASCII takes the no-fold fast path — must equal plain lowercase
+  assert.equal(foldText('Plain ASCII 123!'), 'plain ascii 123!');
+  // Cyrillic ё carries a combining diaeresis in NFD — folded like Latin accents
+  assert.equal(foldText('Ёлка ПРИВЕТ'), 'елка привет');
+  // Astral characters (emoji, plane-2 Han) survive untouched, length preserved
+  assert.equal(foldText('😀 𠀋 Café'), '😀 𠀋 cafe');
+  assert.equal(foldText('😀 𠀋 Café').length, '😀 𠀋 Café'.length);
+  assert.equal(foldText(''), '');
 });

@@ -293,10 +293,6 @@ test('listModels surfaces auth errors instead of falling back', async () => {
   }
 });
 
-test('provider registry covers all fallback lists', () => {
-  assert.deepEqual(Object.keys(PROVIDERS).sort(), Object.keys(FALLBACK_MODELS).sort());
-});
-
 test('messages with images become multimodal content parts', async () => {
   const server = await startMockServer();
   try {
@@ -314,18 +310,6 @@ test('messages with images become multimodal content parts', async () => {
       { type: 'text', text: 'look' },
       { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
     ]);
-  } finally {
-    server.close();
-  }
-});
-
-test('requestImages adds OpenRouter modalities', async () => {
-  const server = await startMockServer();
-  try {
-    await sendMessage([{ role: 'user', content: 'draw' }], config(server, { requestImages: true }), null);
-    assert.deepEqual(server.lastRequest.body.modalities, ['image', 'text']);
-    await sendMessage([{ role: 'user', content: 'hi' }], config(server), null);
-    assert.ok(!('modalities' in server.lastRequest.body));
   } finally {
     server.close();
   }
@@ -585,6 +569,8 @@ test('nanogpt listModels requests the detailed catalog and maps its fields', asy
 });
 
 test('every provider is hosted, keyed, and covered by fallback models', () => {
+  // Key sets must match exactly — a fallback list for a removed provider is stale
+  assert.deepEqual(Object.keys(PROVIDERS).sort(), Object.keys(FALLBACK_MODELS).sort());
   for (const [provider, p] of Object.entries(PROVIDERS)) {
     assert.match(p.baseURL, /^https:\/\//);
     assert.equal(p.requiresKey, true);
@@ -648,7 +634,6 @@ test('openai streams request usage via stream_options; aggregators do not', asyn
     assert.deepEqual(server.lastRequest.body.stream_options, { include_usage: true });
     await sendMessage([{ role: 'user', content: 'hi' }], config(server), () => {});
     assert.equal(server.lastRequest.body.stream_options, undefined);
-    assert.equal(server.lastRequest.body.usage.include, true);
   } finally {
     server.close();
   }

@@ -59,7 +59,7 @@ test('settings: chat-mode feature defaults are present', () => {
   assert.equal(fresh.showCostEstimates, true);
 });
 
-test('chats: listChats cache invalidates on append and rewrite', async () => {
+test('chats: listChats cache stays fresh across append and rewrite', async () => {
   const { file } = createChat('CacheChar', 'User');
   const first = listChats('CacheChar').find((c) => c.file === file);
   assert.equal(first.messageCount, 0);
