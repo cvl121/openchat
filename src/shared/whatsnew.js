@@ -9,6 +9,39 @@ import { compareVersions } from './version.js';
 
 export const WHATS_NEW = [
   {
+    version: '0.9.7',
+    items: {
+      en: [
+        'Huge chats are now first-class: only the newest messages are built on screen and earlier ones stream in as you scroll up, so a thousand-message conversation opens instantly — search jumps still land anywhere in the history.',
+        'Big SillyTavern libraries import smoothly: the app stays responsive with live progress, corrupt lines in a chat file are skipped (and reported) instead of losing the whole chat, and failures are listed by name.',
+        'Heavy work moved off the hot path: chat files are read and written on a background thread, and searching all chats no longer freezes the app — mid-typing searches cancel instantly.',
+        'Chat compression got safer: big backlogs are summarized in batches that always fit the model, and small-context models no longer re-compress on every turn.',
+        'You can now drag the top edge of the message box to make it taller (double-click resets), and the sidebar collapse button tucks neatly into the header when the sidebar is hidden.',
+      ],
+      es: [
+        'Los chats enormes ahora son de primera clase: solo se construyen en pantalla los mensajes más recientes y los anteriores aparecen al desplazarte hacia arriba, así que una conversación de mil mensajes se abre al instante — los saltos de búsqueda siguen llegando a cualquier punto del historial.',
+        'Las bibliotecas grandes de SillyTavern se importan sin problemas: la app sigue respondiendo con progreso en vivo, las líneas corruptas de un chat se omiten (y se informan) en lugar de perder todo el chat, y los fallos se listan por nombre.',
+        'El trabajo pesado salió del camino crítico: los archivos de chat se leen y escriben en un hilo en segundo plano, y buscar en todos los chats ya no congela la app — las búsquedas a mitad de escritura se cancelan al instante.',
+        'La compresión de chats es más segura: los historiales grandes se resumen en lotes que siempre caben en el modelo, y los modelos de contexto pequeño ya no recomprimen en cada turno.',
+        'Ahora puedes arrastrar el borde superior del cuadro de mensaje para hacerlo más alto (doble clic lo restablece), y el botón de plegar la barra lateral se integra en la cabecera cuando la barra está oculta.',
+      ],
+      'zh-CN': [
+        '超长对话现已获得一流支持：屏幕上只构建最新的消息，向上滚动时较早的消息无缝载入，上千条消息的对话瞬间打开 — 搜索跳转仍可到达历史记录中的任何位置。',
+        '大型 SillyTavern 库可以顺畅导入：应用保持响应并实时显示进度，聊天文件中的损坏行会被跳过（并报告）而不会丢失整个聊天，失败项会按名称列出。',
+        '繁重工作移出了关键路径：聊天文件在后台线程读写，搜索全部聊天不再冻结应用 — 输入中途的搜索会立即取消。',
+        '聊天压缩更安全：大量积压的消息会分批摘要，始终不超过模型的上下文，小上下文模型也不再每轮都重新压缩。',
+        '现在可以拖动消息输入框的上边缘调高它（双击重置），侧边栏折叠按钮在侧边栏隐藏时会整齐地收进页眉。',
+      ],
+      ja: [
+        '巨大なチャットを本格サポート：画面には最新のメッセージだけを構築し、上にスクロールすると過去分がシームレスに読み込まれます。1000件のメッセージがある会話も一瞬で開き、検索ジャンプは履歴のどこへでも移動できます。',
+        '大きな SillyTavern ライブラリもスムーズにインポート：進行状況をライブ表示しながらアプリは応答し続け、チャットファイル内の壊れた行はチャット全体を失う代わりにスキップ（および報告）され、失敗は名前つきで一覧表示されます。',
+        '重い処理をホットパスから移動：チャットファイルの読み書きはバックグラウンドスレッドで行われ、全チャット検索でアプリが固まらなくなりました — 入力途中の検索は即座にキャンセルされます。',
+        'チャット圧縮がより安全に：大量の未圧縮履歴はモデルに必ず収まるバッチで要約され、小さいコンテキストのモデルで毎ターン再圧縮されることもなくなりました。',
+        'メッセージ入力欄の上端をドラッグして高くできるようになりました（ダブルクリックでリセット）。サイドバーを隠すと、折りたたみボタンがヘッダーにきれいに収まります。',
+      ],
+    },
+  },
+  {
     version: '0.9.6',
     items: {
       en: [
