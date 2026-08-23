@@ -119,6 +119,7 @@ export const en = {
   'chat.costTooltip': '~{inTokens} in → {outTokens} out tokens',
   'chat.costCachedTooltip': '{cached} cached',
   'chat.thinking': 'Thinking… (~{tokens} tokens)',
+  'chat.resizeInputTitle': 'Drag to resize the input · double-click to reset',
   'chat.thinkingExhausted': 'The model spent its entire response budget thinking and produced no reply. Raise Max Tokens or lower Reasoning Effort in Settings → Generation.',
   'chat.attachmentView': '{name} — click to view',
   'chat.saveImage': 'Save Image…',

@@ -119,6 +119,7 @@ export const es = {
   'chat.costTooltip': '~{inTokens} de entrada → {outTokens} tokens de salida',
   'chat.costCachedTooltip': '{cached} en caché',
   'chat.thinking': 'Pensando… (~{tokens} tokens)',
+  'chat.resizeInputTitle': 'Arrastra para cambiar el tamaño del campo · doble clic para restablecer',
   'chat.thinkingExhausted': 'El modelo gastó todo su presupuesto de respuesta pensando y no produjo ninguna respuesta. Sube Tokens Máximos o baja el Esfuerzo de razonamiento en Ajustes → Generación.',
   'chat.attachmentView': '{name} — haz clic para ver',
   'chat.saveImage': 'Guardar imagen…',

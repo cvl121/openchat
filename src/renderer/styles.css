@@ -146,9 +146,8 @@ input[type='checkbox'] {
 }
 
 #sidebar-toggle {
-  /* Stationary toggle: sits right of the macOS traffic lights and stays in
-     the same spot whether the sidebar is open or collapsed; must remain
-     clickable inside the draggable title-bar strip */
+  /* Open: sits right of the macOS traffic lights, over the sidebar's top
+     strip; must remain clickable inside the draggable title-bar strip */
   position: fixed;
   top: 7px;
   left: 80px;
@@ -156,10 +155,22 @@ input[type='checkbox'] {
   display: flex;
   align-items: center;
   -webkit-app-region: no-drag;
+  transition: top 0.22s ease, left 0.22s ease;
 }
+/* Collapsed: the title-bar spot would float over nothing, so dock the toggle
+   into the leading slot of the content header row instead (the traffic
+   lights block the top-left corner itself). The headers below make room.
+   :has() because the toggle lives on <body>, outside #app. */
+body:has(#app.sidebar-collapsed) #sidebar-toggle {
+  top: 50px;
+  left: 12px;
+}
+#app.sidebar-collapsed .chat-toolbar { padding-left: 46px; }
+#app.sidebar-collapsed .page-header { padding-left: 24px; }
 
 @media (prefers-reduced-motion: reduce) {
   #sidebar { transition: none; }
+  #sidebar-toggle { transition: none; }
 }
 
 #sidebar-resizer {
@@ -311,6 +322,7 @@ input[type='checkbox'] {
   margin-top: 38px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-raised);
+  transition: padding-left 0.22s ease; /* in step with the docking sidebar toggle */
 }
 .chat-toolbar .chat-title {
   flex: 1; min-width: 0;
@@ -469,11 +481,19 @@ input[type='checkbox'] {
 }
 #chat-input {
   flex: 1;
-  max-height: 280px;
+  max-height: 50vh; /* the JS auto-grow enforces the effective cap */
   min-height: 38px;
   overflow-y: auto;
-  resize: none; /* height is managed by auto-grow */
+  resize: none; /* height is managed by auto-grow + the drag handle */
 }
+#input-resizer {
+  height: 5px;
+  margin-bottom: -5px; /* overlap the input bar's top edge */
+  cursor: row-resize;
+  flex-shrink: 0;
+  z-index: 3;
+}
+#input-resizer:hover { background: var(--accent); opacity: 0.5; }
 .input-hint {
   font-size: 10.5px; color: var(--text-faint);
   padding: 2px 16px 8px; background: var(--bg-raised);

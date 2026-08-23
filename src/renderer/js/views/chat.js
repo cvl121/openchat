@@ -863,17 +863,45 @@ export function renderChat({ scrollBottom = false } = {}) {
   });
   for (const child of messagesEl.children) messagesResizeObserver.observe(child, { box: 'border-box' });
 
-  // Input bar — auto-grows with content up to a max height
+  // Input bar — auto-grows with content from a user-resizable base height
+  // (drag the handle above the bar; double-click resets)
   const input = el('textarea', {
     id: 'chat-input',
     placeholder: imageMode ? t('chat.imagePlaceholder') : t('chat.messagePlaceholder', { name: data.name }),
     rows: 1,
   });
+  const baseInputHeight = () =>
+    Math.max(38, Math.min(state.settings.chatInputHeight ?? 38, Math.round(window.innerHeight * 0.5)));
   const autoGrow = () => {
+    const base = baseInputHeight();
     input.style.height = 'auto';
-    input.style.height = `${Math.min(input.scrollHeight + 2, 280)}px`;
+    input.style.height = `${Math.min(Math.max(input.scrollHeight + 2, base), Math.max(280, base))}px`;
   };
   input.addEventListener('input', autoGrow);
+  const inputResizer = el('div', { id: 'input-resizer', title: t('chat.resizeInputTitle') });
+  inputResizer.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = input.getBoundingClientRect().height;
+    const move = (ev) => {
+      state.settings.chatInputHeight = Math.round(
+        Math.max(38, Math.min(startH + (startY - ev.clientY), window.innerHeight * 0.5))
+      );
+      autoGrow();
+    };
+    const up = () => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      scheduleSettingsSave();
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  });
+  inputResizer.addEventListener('dblclick', () => {
+    state.settings.chatInputHeight = 38;
+    scheduleSettingsSave();
+    autoGrow();
+  });
   input.addEventListener('keydown', (e) => {
     // Never send while an IME composition is active (CJK input confirms
     // conversions with Enter; keyCode 229 covers older Chromium quirks)
@@ -995,7 +1023,7 @@ export function renderChat({ scrollBottom = false } = {}) {
       )
     );
   }
-  root.append(el('div', { id: 'chat-input-bar' }, attachBtn, imageBtn, impersonateBtn, input, sendBtn));
+  root.append(inputResizer, el('div', { id: 'chat-input-bar' }, attachBtn, imageBtn, impersonateBtn, input, sendBtn));
   // Live token estimate for the draft, alongside the key hints
   const draftTokens = el('span', { id: 'draft-tokens' });
   const updateDraftTokens = () => {

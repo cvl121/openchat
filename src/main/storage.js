@@ -170,6 +170,7 @@ export const DEFAULT_SETTINGS = {
   developerMode: false,
   onboardingComplete: false,
   sidebarWidth: 280,
+  chatInputHeight: 38, // user-resizable input bar base height (px)
   chatInputHeight: 76,
 };
 

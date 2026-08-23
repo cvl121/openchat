@@ -119,6 +119,7 @@ export const ja = {
   'chat.costTooltip': '約 入力{inTokens} → 出力{outTokens} トークン',
   'chat.costCachedTooltip': 'キャッシュ {cached}',
   'chat.thinking': '思考中…（約 {tokens} トークン）',
+  'chat.resizeInputTitle': 'ドラッグで入力欄のサイズを変更 · ダブルクリックでリセット',
   'chat.thinkingExhausted': 'モデルが応答予算のすべてを思考に費やし、返答を生成できませんでした。設定 → 生成 で最大トークン数を上げるか、推論の深さを下げてください。',
   'chat.attachmentView': '{name} — クリックで表示',
   'chat.saveImage': '画像を保存…',

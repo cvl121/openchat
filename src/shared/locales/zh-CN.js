@@ -119,6 +119,7 @@ export const zhCN = {
   'chat.costTooltip': '~{inTokens} 输入 → {outTokens} 输出 token',
   'chat.costCachedTooltip': '缓存 {cached}',
   'chat.thinking': '思考中…（约 {tokens} 个 token）',
+  'chat.resizeInputTitle': '拖动调整输入框大小 · 双击重置',
   'chat.thinkingExhausted': '模型将全部回复预算用于思考，未能生成回复。请在 设置 → 生成 中提高最大 token 数或降低推理强度。',
   'chat.attachmentView': '{name} — 点击查看',
   'chat.saveImage': '保存图像…',
