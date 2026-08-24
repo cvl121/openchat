@@ -9,6 +9,35 @@ import { compareVersions } from './version.js';
 
 export const WHATS_NEW = [
   {
+    version: '0.9.8',
+    items: {
+      en: [
+        'The 💭 thinking block is now fully usable while the model is still thinking: scroll through it freely (it holds your place, and follows the newest text when you’re at the bottom), collapse or expand it mid-stream and it stays that way — reopening jumps back to the live tail.',
+        'New "Show thinking" setting (Settings → Generation) hides reasoning-model thinking entirely if you’d rather not see it — the usual typing dots show while the model thinks, and the reply appears as normal.',
+        'The sidebar collapse button now stays put in the top-left when you hide the sidebar — like other chat apps — instead of dropping down into the header.',
+        'The bottom-left navigation box now lines up exactly with the message box, so the bottom of the window reads as one clean row.',
+      ],
+      es: [
+        'El bloque de pensamiento 💭 ahora es totalmente usable mientras el modelo sigue pensando: desplázate por él libremente (mantiene tu posición y sigue el texto más reciente cuando estás al final), pliégalo o expándelo en plena transmisión y así se queda — al reabrirlo vuelve al final en vivo.',
+        'Nuevo ajuste «Mostrar el pensamiento» (Ajustes → Generación) que oculta por completo el pensamiento de los modelos de razonamiento si prefieres no verlo — se muestran los puntos habituales mientras el modelo piensa, y la respuesta aparece con normalidad.',
+        'El botón de plegar la barra lateral ahora se queda fijo arriba a la izquierda al ocultar la barra — como en otras apps de chat — en lugar de bajar a la cabecera.',
+        'El cuadro de navegación inferior izquierdo ahora se alinea exactamente con el cuadro de mensaje, así que la parte inferior de la ventana se ve como una sola fila limpia.',
+      ],
+      'zh-CN': [
+        '💭 思考区块在模型思考期间现已完全可用：可以自由滚动（保持你的位置，滚到底部时跟随最新文本），流式生成中折叠或展开都会保持原样 — 重新展开时会跳回实时末尾。',
+        '新增「显示思考过程」设置（设置 → 生成）：如果不想看到推理模型的思考，可将其完全隐藏 — 模型思考时显示常规的输入圆点，回复照常出现。',
+        '隐藏侧边栏时，折叠按钮现在固定停留在左上角 — 与其他聊天应用一致 — 而不再下移到页眉中。',
+        '左下角的导航框现在与消息输入框精确对齐，窗口底部看起来是整齐的一行。',
+      ],
+      ja: [
+        '💭 思考ブロックがモデルの思考中でも完全に操作可能に：自由にスクロールでき（位置を保持し、最下部にいるときは最新のテキストに追従）、ストリーミング中に折りたたみ・展開してもその状態が維持されます — 再展開するとライブの末尾に戻ります。',
+        '新しい「思考を表示」設定（設定 → 生成）：推論モデルの思考を見たくない場合は完全に非表示にできます — 思考中はいつものドットが表示され、返信は通常どおり届きます。',
+        'サイドバーを隠したとき、折りたたみボタンが左上に固定されたままになりました — 他のチャットアプリと同様で、ヘッダーに降りてくることはありません。',
+        '左下のナビゲーションボックスがメッセージ入力欄とぴったり揃い、ウィンドウの下部がきれいな一列に見えるようになりました。',
+      ],
+    },
+  },
+  {
     version: '0.9.7',
     items: {
       en: [
