@@ -9,6 +9,23 @@ import { compareVersions } from './version.js';
 
 export const WHATS_NEW = [
   {
+    version: '0.9.10',
+    items: {
+      en: [
+        'Fixed: collapsing the 💭 thinking block while a response streams now works reliably every time — fast token streams could previously swallow the click before it registered.',
+      ],
+      es: [
+        'Corregido: plegar el bloque de pensamiento 💭 mientras se transmite una respuesta ahora funciona de forma fiable siempre — antes, los flujos rápidos de tokens podían tragarse el clic antes de registrarse.',
+      ],
+      'zh-CN': [
+        '修复：在回复流式生成期间折叠 💭 思考区块现在每次都可靠生效 — 此前较快的 token 流可能在点击生效前将其吞掉。',
+      ],
+      ja: [
+        '修正：返信のストリーミング中に 💭 思考ブロックを折りたたむ操作が毎回確実に効くようになりました — 以前は高速なトークンストリームがクリックを取りこぼすことがありました。',
+      ],
+    },
+  },
+  {
     version: '0.9.9',
     items: {
       en: [
