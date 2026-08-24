@@ -428,6 +428,8 @@ export const es = {
   'settings.reasoningLow': 'Bajo',
   'settings.reasoningMedium': 'Medio',
   'settings.reasoningHigh': 'Alto',
+  'settings.showThinking': 'Mostrar el pensamiento',
+  'settings.showThinkingHint': 'Muestra el pensamiento del modelo de razonamiento en un bloque plegable encima de su respuesta. Desactivarlo solo oculta el texto: el modelo sigue pensando (y facturando) según el Esfuerzo de razonamiento.',
   'settings.costEstimates': 'Estimar el coste de los mensajes',
   'settings.costEstimatesHint': 'Registra los tokens estimados por respuesta y muestra un total acumulado en dólares en la cabecera del chat. Los precios de OpenRouter y NanoGPT se cargan en vivo; OpenAI, Anthropic y Gemini usan precios de referencia incluidos. Las estimaciones son orientativas, no datos de facturación.',
   'settings.chatCompression': 'Compresión de chats',

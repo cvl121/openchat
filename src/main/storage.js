@@ -166,6 +166,7 @@ export const DEFAULT_SETTINGS = {
   modelPricingCache: {}, // "provider|modelId" -> {inPerM, outPerM} USD per million tokens
   pinnedConversations: [], // chat-mode conversation files pinned to the top of the sidebar
   showCostEstimates: true, // estimate per-reply cost from token counts and known model pricing
+  showThinking: true, // display reasoning-model thinking blocks above replies
   updateCheck: true, // daily version check against GitHub Releases
   skippedUpdateVersion: '', // release the user chose to ignore
   developerMode: false,

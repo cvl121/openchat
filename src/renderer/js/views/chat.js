@@ -113,6 +113,9 @@ function cacheFor(msg) {
 // Reasoning-model thinking, per message, session-only (never persisted).
 // Keyed weakly so deleted messages release their (possibly large) thought text.
 const reasoningText = new WeakMap();
+// Messages whose thinking block the user toggled by hand mid-stream; their
+// choice wins over the auto open-while-thinking/close-on-reply behavior.
+const thinkingToggled = new WeakSet();
 
 /**
  * Collapsible thinking block shown above a reasoning model's reply. Open while
@@ -121,7 +124,7 @@ const reasoningText = new WeakMap();
  */
 function thinkingHTML(msg) {
   const text = reasoningText.get(msg);
-  if (!text) return '';
+  if (!text || state.settings.showThinking === false) return '';
   const open = msg.__streaming && !msg.mes;
   const label = t('chat.thinking', { tokens: estimateTokens(text).toLocaleString() });
   return (
@@ -129,6 +132,30 @@ function thinkingHTML(msg) {
     `<summary>💭 ${escapeHtml(label)}</summary>` +
     `<div class="thinking-text">${escapeHtml(text)}</div></details>`
   );
+}
+
+/**
+ * Repaint the streaming message. Replacing innerHTML resets the thinking
+ * block's disclosure state and inner scroll position, which a per-chunk
+ * repaint would do several times a second — so capture both first and restore
+ * after. The thinking text follows its own bottom unless the user scrolled up,
+ * the same contract the message list keeps.
+ */
+function repaintStreaming(msg) {
+  const prev = streamingMsgEl.querySelector(':scope > .thinking-block');
+  const prevText = prev?.querySelector('.thinking-text');
+  // Read scroll state BEFORE the replacement detaches prevText (a detached
+  // element reports scrollTop 0)
+  const prevScrollTop = prevText?.scrollTop ?? 0;
+  const follow = !prevText || prevScrollTop + prevText.clientHeight >= prevText.scrollHeight - 4;
+  streamingMsgEl.innerHTML = renderedMarkdown(msg);
+  const next = streamingMsgEl.querySelector(':scope > .thinking-block');
+  if (!next) return;
+  if (prev && thinkingToggled.has(msg)) next.open = prev.open;
+  if (next.open) {
+    const text = next.querySelector('.thinking-text');
+    text.scrollTop = follow ? text.scrollHeight : prevScrollTop;
+  }
 }
 
 function renderedMarkdown(msg) {
@@ -160,7 +187,7 @@ export function initChat(callbacks) {
         renderQueued = false;
         // The user may have switched conversations during the frame
         if (state.runs.has(requestId) && run.chat === state.currentChat && streamingMsgEl) {
-          streamingMsgEl.innerHTML = renderedMarkdown(msg);
+          repaintStreaming(msg);
           scrollToBottom(false);
         }
       });
@@ -174,12 +201,15 @@ export function initChat(callbacks) {
     const msg = run.msg;
     reasoningText.set(msg, (reasoningText.get(msg) ?? '') + text);
     if (run.chat !== state.currentChat) return;
+    // Hidden thinking still accumulates (for the budget-exhausted notice),
+    // but the streaming dots stay up instead of an empty repaint.
+    if (state.settings.showThinking === false) return;
     if (!renderQueued && streamingMsgEl) {
       renderQueued = true;
       requestAnimationFrame(() => {
         renderQueued = false;
         if (state.runs.has(requestId) && run.chat === state.currentChat && streamingMsgEl) {
-          streamingMsgEl.innerHTML = renderedMarkdown(msg);
+          repaintStreaming(msg);
           scrollToBottom(false);
         }
       });
@@ -1253,6 +1283,20 @@ function messageEl(msg, index, persona = activePersona(), lastAssistant = lastAs
   if (msg.__streaming) {
     streamingMsgEl = content;
     content.setAttribute('aria-live', 'polite');
+    // Delegated (the block is rebuilt every repaint frame): a manual toggle
+    // makes the user's open/closed choice stick for the rest of the stream.
+    content.addEventListener('click', (e) => {
+      if (!e.target.closest('.thinking-block > summary')) return;
+      thinkingToggled.add(msg);
+      // Reopening mid-stream should resume at the live tail, not the top
+      // (closed <details> zero out their text's scroll state). rAF: the
+      // toggle's default action lands after this event, and a repaint may
+      // swap the element in between — re-query the live one.
+      requestAnimationFrame(() => {
+        const text = content.querySelector('.thinking-block[open] > .thinking-text');
+        if (text) text.scrollTop = text.scrollHeight;
+      });
+    });
   }
   content.addEventListener('dblclick', () => {
     if (!msg.__streaming && !isCurrentChatGenerating()) editMessage(msg, index);

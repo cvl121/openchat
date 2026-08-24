@@ -428,6 +428,8 @@ export const en = {
   'settings.reasoningLow': 'Low',
   'settings.reasoningMedium': 'Medium',
   'settings.reasoningHigh': 'High',
+  'settings.showThinking': 'Show thinking',
+  'settings.showThinkingHint': 'Display a reasoning model’s thinking in a collapsible block above its reply. Turning this off only hides the text — the model still thinks (and bills) per Reasoning Effort.',
   'settings.costEstimates': 'Estimate message costs',
   'settings.costEstimatesHint': 'Tracks estimated tokens per reply and shows a running dollar total in the chat header. OpenRouter and NanoGPT prices load live; OpenAI, Anthropic, and Gemini use bundled reference prices. Estimates are heuristic, not billing data.',
   'settings.chatCompression': 'Chat Compression',

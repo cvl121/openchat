@@ -428,6 +428,8 @@ export const zhCN = {
   'settings.reasoningLow': '低',
   'settings.reasoningMedium': '中',
   'settings.reasoningHigh': '高',
+  'settings.showThinking': '显示思考过程',
+  'settings.showThinkingHint': '在回复上方以可折叠区块显示推理模型的思考过程。关闭后仅隐藏文本——模型仍会按推理强度进行思考（并计费）。',
   'settings.costEstimates': '估算消息成本',
   'settings.costEstimatesHint': '跟踪每条回复的估算 token 数，并在聊天标题栏显示累计美元金额。OpenRouter 和 NanoGPT 价格实时加载；OpenAI、Anthropic 和 Gemini 使用内置参考价格。估算仅为推测，并非账单数据。',
   'settings.chatCompression': '聊天压缩',

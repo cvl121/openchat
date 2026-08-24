@@ -146,8 +146,9 @@ input[type='checkbox'] {
 }
 
 #sidebar-toggle {
-  /* Open: sits right of the macOS traffic lights, over the sidebar's top
-     strip; must remain clickable inside the draggable title-bar strip */
+  /* Fixed right of the macOS traffic lights, over the title-bar strip; the
+     sidebar slides in and out beneath it while the button never moves.
+     Must remain clickable inside the draggable strip. */
   position: fixed;
   top: 7px;
   left: 80px;
@@ -155,22 +156,10 @@ input[type='checkbox'] {
   display: flex;
   align-items: center;
   -webkit-app-region: no-drag;
-  transition: top 0.22s ease, left 0.22s ease;
 }
-/* Collapsed: the title-bar spot would float over nothing, so dock the toggle
-   into the leading slot of the content header row instead (the traffic
-   lights block the top-left corner itself). The headers below make room.
-   :has() because the toggle lives on <body>, outside #app. */
-body:has(#app.sidebar-collapsed) #sidebar-toggle {
-  top: 50px;
-  left: 12px;
-}
-#app.sidebar-collapsed .chat-toolbar { padding-left: 46px; }
-#app.sidebar-collapsed .page-header { padding-left: 24px; }
 
 @media (prefers-reduced-motion: reduce) {
   #sidebar { transition: none; }
-  #sidebar-toggle { transition: none; }
 }
 
 #sidebar-resizer {
@@ -259,6 +248,11 @@ body:has(#app.sidebar-collapsed) #sidebar-toggle {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 4px;
+  /* Match the chat input dock's default height (59px bar: 38px min input +
+     2×10px padding + 1px border; 23px hint: 13px line + 2px/8px padding) so
+     the two bottom boxes' top borders meet at the sidebar divide. */
+  min-height: 82px;
+  align-content: center;
 }
 .nav-btn {
   background: none; border: none;
@@ -322,7 +316,6 @@ body:has(#app.sidebar-collapsed) #sidebar-toggle {
   margin-top: 38px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-raised);
-  transition: padding-left 0.22s ease; /* in step with the docking sidebar toggle */
 }
 .chat-toolbar .chat-title {
   flex: 1; min-width: 0;
@@ -495,7 +488,8 @@ body:has(#app.sidebar-collapsed) #sidebar-toggle {
 }
 #input-resizer:hover { background: var(--accent); opacity: 0.5; }
 .input-hint {
-  font-size: 10.5px; color: var(--text-faint);
+  font-size: 10.5px; line-height: 13px; /* pinned: #sidebar-nav min-height sums this */
+  color: var(--text-faint);
   padding: 2px 16px 8px; background: var(--bg-raised);
   display: flex; justify-content: space-between; gap: 10px; align-items: baseline;
 }

@@ -680,6 +680,14 @@ function renderGeneration() {
       set: set('reasoning_effort'),
       hint: t('settings.reasoningEffortHint'),
     }),
+    checkboxRow(t('settings.showThinking'), {
+      get: () => s.showThinking ?? true,
+      set: (v) => {
+        s.showThinking = v;
+        scheduleSettingsSave();
+      },
+      hint: t('settings.showThinkingHint'),
+    }),
     checkboxRow(t('settings.costEstimates'), {
       get: () => s.showCostEstimates ?? true,
       set: (v) => {

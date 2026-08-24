@@ -428,6 +428,8 @@ export const ja = {
   'settings.reasoningLow': '低',
   'settings.reasoningMedium': '中',
   'settings.reasoningHigh': '高',
+  'settings.showThinking': '思考を表示',
+  'settings.showThinkingHint': '推論モデルの思考を返信の上に折りたたみ可能なブロックで表示します。オフにしてもテキストが隠れるだけで、モデルは推論の深さの設定どおりに思考（課金）します。',
   'settings.costEstimates': 'メッセージコストを推定',
   'settings.costEstimatesHint': '応答ごとの推定トークン数を記録し、チャットヘッダーに累計金額（ドル）を表示します。OpenRouter と NanoGPT の価格はライブで読み込まれ、OpenAI、Anthropic、Gemini は同梱の参考価格を使用します。推定値は目安であり、請求データではありません。',
   'settings.chatCompression': 'チャット圧縮',
