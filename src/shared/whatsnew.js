@@ -9,6 +9,23 @@ import { compareVersions } from './version.js';
 
 export const WHATS_NEW = [
   {
+    version: '0.9.9',
+    items: {
+      en: [
+        'The sidebar collapse button now sits at the sidebar’s right edge and rides along as you resize it; hiding the sidebar slides the button to the window’s top-left corner — beside the traffic lights on macOS, into the free corner on Windows and Linux.',
+      ],
+      es: [
+        'El botón de plegar la barra lateral ahora se sitúa en el borde derecho de la barra y la acompaña al redimensionarla; al ocultar la barra, el botón se desliza a la esquina superior izquierda de la ventana — junto a los botones de semáforo en macOS, y en la esquina libre en Windows y Linux.',
+      ],
+      'zh-CN': [
+        '侧边栏折叠按钮现在位于侧边栏右缘，并随拖拽调宽而移动；隐藏侧边栏时，按钮滑动到窗口左上角 — 在 macOS 上紧邻红绿灯按钮，在 Windows 和 Linux 上占据空闲的角落。',
+      ],
+      ja: [
+        'サイドバーの折りたたみボタンがサイドバーの右端に配置され、幅の変更にも追従するようになりました。サイドバーを隠すとボタンはウィンドウ左上へスライドします — macOS では信号機ボタンの隣に、Windows と Linux では空いた角に収まります。',
+      ],
+    },
+  },
+  {
     version: '0.9.8',
     items: {
       en: [
