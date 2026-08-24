@@ -41,6 +41,9 @@ export function initSidebar(cb) {
   const resizer = document.getElementById('sidebar-resizer');
   resizer.addEventListener('mousedown', (e) => {
     e.preventDefault();
+    // The toggle button rides the sidebar's right edge; suspend its easing
+    // so it tracks the drag 1:1
+    document.body.classList.add('sidebar-resizing');
     const move = (ev) => {
       const width = Math.min(480, Math.max(200, ev.clientX));
       document.documentElement.style.setProperty('--sidebar-width', `${width}px`);
@@ -49,6 +52,7 @@ export function initSidebar(cb) {
     const up = () => {
       document.removeEventListener('mousemove', move);
       document.removeEventListener('mouseup', up);
+      document.body.classList.remove('sidebar-resizing');
       scheduleSettingsSave();
     };
     document.addEventListener('mousemove', move);
@@ -56,11 +60,15 @@ export function initSidebar(cb) {
   });
 }
 
-// Collapsible sidebar: a single toggle that stays put in the top-left while
-// the panel slides in and out beneath it (persisted in settings).
-const SHORTCUT_HINT = navigator.platform.includes('Mac') ? '⌘\\' : 'Ctrl+\\';
+// Collapsible sidebar: a single toggle riding the panel's right edge; when
+// the panel slides out it docks at the window's top-left (persisted in
+// settings). CSS positions it per platform — macOS docks it beside the
+// traffic lights, other OSes get the free corner.
+const IS_MAC = navigator.platform.includes('Mac');
+const SHORTCUT_HINT = IS_MAC ? '⌘\\' : 'Ctrl+\\';
 
 function renderCollapseControls() {
+  document.body.classList.toggle('platform-mac', IS_MAC);
   const btn = el('button', { id: 'sidebar-toggle', class: 'btn-icon', onclick: toggleSidebar });
   btn.innerHTML =
     '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/></svg>';

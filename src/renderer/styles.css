@@ -146,20 +146,30 @@ input[type='checkbox'] {
 }
 
 #sidebar-toggle {
-  /* Fixed right of the macOS traffic lights, over the title-bar strip; the
-     sidebar slides in and out beneath it while the button never moves.
-     Must remain clickable inside the draggable strip. */
+  /* Right-aligned in the sidebar's top strip, tracking the live resize
+     width; collapsing slides it to the window's top-left corner in step
+     with the departing panel. Must remain clickable inside the draggable
+     title-bar strip. */
   position: fixed;
   top: 7px;
-  left: 80px;
+  left: calc(var(--sidebar-width) - 36px);
   z-index: 40;
   display: flex;
   align-items: center;
   -webkit-app-region: no-drag;
+  transition: left 0.22s ease;
 }
+/* While the resizer drags, track the pointer 1:1 instead of easing after it */
+body.sidebar-resizing #sidebar-toggle { transition: none; }
+/* Collapsed: dock at the top-left. macOS (hiddenInset) has the traffic
+   lights in the corner itself, so land just right of them; Windows/Linux
+   keep their native title bar above the page, so the corner is free. */
+body:has(#app.sidebar-collapsed) #sidebar-toggle { left: 10px; }
+body.platform-mac:has(#app.sidebar-collapsed) #sidebar-toggle { left: 80px; }
 
 @media (prefers-reduced-motion: reduce) {
   #sidebar { transition: none; }
+  #sidebar-toggle { transition: none; }
 }
 
 #sidebar-resizer {
