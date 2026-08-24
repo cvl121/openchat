@@ -135,33 +135,43 @@ function thinkingHTML(msg) {
 }
 
 /**
- * Repaint the streaming message. Replacing innerHTML resets the thinking
- * block's disclosure state and inner scroll position, which a per-chunk
- * repaint would do several times a second — so capture both first and restore
- * after. The thinking text follows its own bottom unless the user scrolled up,
- * the same contract the message list keeps.
+ * Repaint the streaming message. The thinking block is updated IN PLACE, not
+ * rebuilt: replacing its DOM every frame would eat real clicks on the summary
+ * (mousedown and mouseup must land on the same node for the click — and the
+ * <details> toggle — to fire, and a press spans several frames) and would
+ * reset the disclosure state and inner scroll position. Only the markdown
+ * body after the block is replaced per frame.
  */
 function repaintStreaming(msg) {
-  const prev = streamingMsgEl.querySelector(':scope > .thinking-block');
-  const prevText = prev?.querySelector('.thinking-text');
-  // Read scroll state BEFORE the replacement detaches prevText (a detached
-  // element reports scrollTop 0)
-  const prevScrollTop = prevText?.scrollTop ?? 0;
-  const follow = !prevText || prevScrollTop + prevText.clientHeight >= prevText.scrollHeight - 4;
-  streamingMsgEl.innerHTML = renderedMarkdown(msg);
-  const next = streamingMsgEl.querySelector(':scope > .thinking-block');
-  if (!next) return;
-  if (prev && thinkingToggled.has(msg)) next.open = prev.open;
-  if (next.open) {
-    const text = next.querySelector('.thinking-text');
-    text.scrollTop = follow ? text.scrollHeight : prevScrollTop;
+  const block = streamingMsgEl.querySelector(':scope > .thinking-block');
+  const text = reasoningText.get(msg);
+  if (!block || !text || state.settings.showThinking === false) {
+    // First paint, no thinking, or thinking hidden: plain full render
+    streamingMsgEl.innerHTML = renderedMarkdown(msg);
+    return;
   }
+  // Auto-open while thinking with no reply yet, auto-close once the reply
+  // starts; a manual toggle wins for the rest of the stream.
+  if (!thinkingToggled.has(msg)) block.open = !msg.mes;
+  block.querySelector('summary').textContent =
+    `💭 ${t('chat.thinking', { tokens: estimateTokens(text).toLocaleString() })}`;
+  const textEl = block.querySelector('.thinking-text');
+  // Follow the newest text unless the user scrolled up (the message list's
+  // contract); a closed block skips this and the reopen handler catches up.
+  const follow = textEl.scrollTop + textEl.clientHeight >= textEl.scrollHeight - 4;
+  textEl.textContent = text;
+  if (block.open && follow) textEl.scrollTop = textEl.scrollHeight;
+  while (block.nextSibling) block.nextSibling.remove();
+  block.insertAdjacentHTML('afterend', renderedBody(msg));
+}
+
+function renderedBody(msg) {
+  const entry = cacheFor(msg);
+  return (entry.html ??= renderMarkdown(msg.mes));
 }
 
 function renderedMarkdown(msg) {
-  const entry = cacheFor(msg);
-  const body = (entry.html ??= renderMarkdown(msg.mes));
-  return thinkingHTML(msg) + body;
+  return thinkingHTML(msg) + renderedBody(msg);
 }
 
 function messageTokens(msg) {
