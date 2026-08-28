@@ -9,6 +9,55 @@ import { compareVersions } from './version.js';
 
 export const WHATS_NEW = [
   {
+    version: '0.9.11',
+    items: {
+      en: [
+        'New: "Text labels instead of icon buttons" (Settings → General) swaps every emoji button — copy, edit, attach, search, history and the rest — for short text labels.',
+        'Fixed: long conversations scroll smoothly again — the scrollbar no longer stutters or jumps when you drag it or scroll up on a trackpad.',
+        'Fixed: text typed into the message box now survives a trip to Settings, Characters, or any other view.',
+        'Fixed: sending twice quickly, or switching conversations right after sending, no longer starts a second reply or drops the reply into the wrong conversation.',
+        'Fixed: deleting a message while a reply streams, saving an Author’s Note mid-stream, or a failed regenerate could duplicate or lose messages — all three now leave the conversation intact.',
+        'Fixed: cancelling the character editor discards lore-book edits instead of quietly keeping them; the "Global" toggle in World Lore updates immediately; the first click after pasting an API key works.',
+        'Fixed: Claude requests with a preset top_p below 1 were rejected by newer models; slow non-streaming responses from reasoning models no longer time out at two minutes.',
+        'Sturdier: a corrupted settings file is set aside instead of overwritten (API keys are kept), and character, chat, and world files can no longer be tricked into escaping their folders.',
+        'Polish: keyboard access for conversation rows, cards, and menus; Escape closes one dialog at a time; correct singular/plural counts; light-theme contrast fixes; a hint when a chat is empty; ⌘Z undo works from an empty input; shortcut hints show Ctrl on Windows and Linux.',
+      ],
+      es: [
+        'Nuevo: «Etiquetas de texto en lugar de botones con iconos» (Ajustes → General) sustituye todos los botones con emoji — copiar, editar, adjuntar, buscar, historial y demás — por etiquetas de texto cortas.',
+        'Corregido: las conversaciones largas vuelven a desplazarse con fluidez — la barra de desplazamiento ya no tartamudea ni salta al arrastrarla o al subir con el trackpad.',
+        'Corregido: el texto escrito en el cuadro de mensaje ahora sobrevive a una visita a Ajustes, Personajes o cualquier otra vista.',
+        'Corregido: enviar dos veces seguidas, o cambiar de conversación justo después de enviar, ya no inicia una segunda respuesta ni la deja en la conversación equivocada.',
+        'Corregido: eliminar un mensaje mientras se transmite una respuesta, guardar una nota de autor en plena transmisión o una regeneración fallida podían duplicar o perder mensajes — ahora la conversación queda intacta.',
+        'Corregido: cancelar el editor de personajes descarta los cambios del libro de lore en lugar de conservarlos en silencio; el interruptor «Global» de World Lore se actualiza al instante; el primer clic tras pegar una clave API funciona.',
+        'Corregido: los modelos Claude recientes rechazaban las peticiones con top_p menor que 1; las respuestas lentas sin streaming de modelos de razonamiento ya no caducan a los dos minutos.',
+        'Más robusto: un archivo de ajustes dañado se aparta en lugar de sobrescribirse (se conservan las claves API), y los archivos de personajes, chats y mundos ya no pueden escapar de sus carpetas.',
+        'Pulido: acceso por teclado a filas de conversación, tarjetas y menús; Escape cierra un diálogo a la vez; singular y plural correctos; mejoras de contraste en el tema claro; un aviso cuando un chat está vacío; ⌘Z deshace desde un cuadro vacío; los atajos muestran Ctrl en Windows y Linux.',
+      ],
+      'zh-CN': [
+        '新增：「使用文字标签代替图标按钮」（设置 → 常规）将所有表情按钮 — 复制、编辑、附件、搜索、历史等 — 替换为简短的文字标签。',
+        '修复：长对话再次流畅滚动 — 拖动滚动条或用触控板向上滚动时不再卡顿或跳动。',
+        '修复：输入框中的文字在前往设置、角色或其他视图后不再丢失。',
+        '修复：快速连发两次，或发送后立即切换对话，不再产生第二条回复或把回复放进错误的对话。',
+        '修复：在回复流式生成时删除消息、中途保存作者注记、或重新生成失败，都可能导致消息重复或丢失 — 现在对话保持完整。',
+        '修复：取消角色编辑器会丢弃世界书改动而不是悄悄保留；世界书的「全局」开关立即生效；粘贴 API 密钥后的第一次点击有效。',
+        '修复：较新的 Claude 模型会拒绝 top_p 小于 1 的请求；推理模型较慢的非流式回复不再在两分钟后超时。',
+        '更稳固：损坏的设置文件会被移到一旁而不是被覆盖（API 密钥得以保留），角色、聊天和世界文件再也无法被诱导越出其文件夹。',
+        '打磨：对话行、卡片和菜单支持键盘操作；Escape 每次只关闭一个对话框；正确的单复数计数；浅色主题对比度修正；聊天为空时显示提示；输入框为空时 ⌘Z 可撤销；快捷键提示在 Windows 和 Linux 上显示 Ctrl。',
+      ],
+      ja: [
+        '新機能：「アイコンボタンの代わりにテキストラベルを表示」（設定 → 一般）で、コピー・編集・添付・検索・履歴などすべての絵文字ボタンを短いテキストラベルに置き換えられます。',
+        '修正：長い会話が再びなめらかにスクロールするようになりました — スクロールバーをドラッグしたりトラックパッドで上へスクロールしても、もたついたり飛んだりしません。',
+        '修正：メッセージ欄に入力した文字が、設定やキャラクターなど他の画面へ移動しても消えなくなりました。',
+        '修正：素早く2回送信したり、送信直後に会話を切り替えても、2つ目の返信が始まったり別の会話に返信が入ったりしなくなりました。',
+        '修正：返信のストリーミング中にメッセージを削除する、途中で作者ノートを保存する、再生成に失敗する — いずれもメッセージの重複や消失を起こす可能性がありましたが、会話がそのまま保たれるようになりました。',
+        '修正：キャラクターエディタのキャンセルでロアブックの変更が正しく破棄されるようになりました。World Lore の「グローバル」切替が即座に反映され、API キーを貼り付けた直後の最初のクリックも効きます。',
+        '修正：top_p が 1 未満のプリセットでは新しい Claude モデルがリクエストを拒否していました。推論モデルの遅い非ストリーミング応答が2分でタイムアウトしなくなりました。',
+        'より堅牢に：破損した設定ファイルは上書きせず退避します（API キーは保持）。キャラクター・チャット・ワールドのファイルがフォルダ外へ抜け出せないようにしました。',
+        '仕上げ：会話行・カード・メニューのキーボード操作、Escape はダイアログを1つずつ閉じる、単数・複数の正しい表記、ライトテーマのコントラスト改善、チャットが空のときのヒント、空の入力欄からの ⌘Z 取り消し、Windows/Linux では Ctrl のショートカット表示。',
+      ],
+    },
+  },
+  {
     version: '0.9.10',
     items: {
       en: [
