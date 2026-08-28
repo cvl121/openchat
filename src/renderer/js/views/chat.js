@@ -1,7 +1,7 @@
 // Chat view: message list, streaming generation, swipes, editing, history,
 // search, and export.
 
-import { el, clear, uuid, nowISO, formatTime, toast, modal, confirmDialog, escapeHtml, formatUSD, formatModelPricing, estimateTokens } from '../util.js';
+import { el, clear, uuid, nowISO, formatTime, toast, modal, confirmDialog, escapeHtml, formatUSD, formatModelPricing, estimateTokens, IS_MAC } from '../util.js';
 import { renderMarkdown } from '../markdown.js';
 import { buildMessages, applicableWorldEntries } from '../promptBuilder.js';
 import {
@@ -33,7 +33,7 @@ import {
   rememberModelPricing,
   knownModelPricing,
 } from '../state.js';
-import { avatar, streamingDots } from '../components.js';
+import { avatar, streamingDots, iconBtn } from '../components.js';
 import { imageFollowupAction, decorateModelError, imageHintMessage } from '../imageFlow.js';
 import { t, currentLocale } from '../../../shared/i18n.js';
 import { foldText, truncateChars } from '../../../shared/text.js';
@@ -83,8 +83,37 @@ function currentNotice() {
   if (!state.currentChat || !state.selectedCharacter) return {};
   return chatNotices.get(convKey(state.selectedCharacter.card.data.name, state.currentChat.file)) ?? {};
 }
-let imageMode = false; // 🎨 toggle: while on, Send routes prompts to the image model
-let impersonating = false; // an impersonate draft is being generated
+// 🎨 toggle, per conversation: while on, Send routes prompts to the image model
+const imageModes = new Map(); // convKey -> true
+function currentConvKey() {
+  if (!state.currentChat || !state.selectedCharacter) return null;
+  return convKey(state.selectedCharacter.card.data.name, state.currentChat.file);
+}
+function isImageMode() {
+  const key = currentConvKey();
+  return key != null && imageModes.get(key) === true;
+}
+let impersonatingKey = null; // convKey whose impersonate draft is being generated
+// Keyboard-shortcut hints: ⌘ on macOS, Ctrl+ elsewhere (mirrors sidebar.js)
+const MOD = IS_MAC ? '⌘' : 'Ctrl+';
+// Monotonic selection token: async chat/character switches bail out when a
+// newer selection started while they were awaiting.
+let selectionSeq = 0;
+/** An inline message edit is open — a full renderChat() would discard it. */
+function inlineEditOpen() {
+  return !!document.querySelector('#messages .msg-edit-area');
+}
+/** Update the toolbar title without a rebuild (used while an edit is open). */
+function updateChatTitleInPlace(title) {
+  const titleEl = document.querySelector('#chat-root .chat-title');
+  if (!titleEl) return;
+  for (const node of titleEl.childNodes) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      node.textContent = title;
+      return;
+    }
+  }
+}
 let pendingAttachments = []; // uploads staged in the input bar, sent with the next message
 // Prompt-ready upload contents, LRU-capped: image entries are base64 data
 // URLs that can run tens of MB each, so an unbounded cache leaks memory over
@@ -295,6 +324,18 @@ export function initChat(callbacks) {
         chat: run.chat,
         character: run.character,
       });
+      // The reroute may have bailed before sending (e.g. no image key):
+      // nothing will ever finish this message, so clear the phantom
+      // streaming state and drop the empty placeholder ourselves.
+      if (msg.__streaming && !runForChat(run.chat)) {
+        delete msg.__streaming;
+        newMessages.delete(msg);
+        const at = run.chat.messages.indexOf(msg);
+        if (!msg.mes.trim() && at !== -1) run.chat.messages.splice(at, 1);
+        await persistChatFor(run.charName, run.chat);
+        if (run.chat === state.currentChat && state.view === 'chat') renderChat();
+        else cb.renderSidebar?.();
+      }
       return;
     } else if (action === 'hint') {
       setNotice(run.charName, run.file, { error: imageHintMessage() });
@@ -354,13 +395,21 @@ async function finishGeneration(run, { failed = false } = {}) {
     wasNew = newMessages.has(msg);
     newMessages.delete(msg);
     if (!msg.mes.trim() && failed) {
-      // Remove empty failed responses; restore swipe view if it was a swipe attempt
-      if (msg.swipes && msg.swipes.length > 1) {
+      // Empty failed response: undo whatever this run did to the message.
+      // A swipe attempt pushed a new slot — pop it and show the previous
+      // one; a regenerate/continue cleared existing text — put it back;
+      // a brand-new reply has nothing to keep — drop it.
+      if (run.pushedSwipe && msg.swipes && msg.swipes.length > 1) {
         msg.swipes.pop();
         msg.swipe_id = msg.swipes.length - 1;
         msg.mes = msg.swipes[msg.swipe_id];
+      } else if (run.prevMes != null) {
+        msg.mes = run.prevMes;
+        if (msg.swipes) msg.swipes[msg.swipe_id ?? 0] = run.prevMes;
+        if (run.prevDate) msg.send_date = run.prevDate;
       } else {
-        chat.messages.splice(chat.messages.indexOf(msg), 1);
+        const at = chat.messages.indexOf(msg);
+        if (at !== -1) chat.messages.splice(at, 1);
       }
     }
   }
@@ -553,7 +602,9 @@ async function maybeCompressChat(chat, charName) {
     target.metadata.summary = { text, upToIndex: batchEnd };
     await persistChatMetadataFor(charName, target);
     devLog('INFO', `compressed ${batchEnd - start} messages into a ~${estimateTokens(text)}-token summary`);
-    if (target === state.currentChat && state.view === 'chat' && !isCurrentChatGenerating()) renderChat();
+    // Never rebuild over an open inline edit — the new count shows on the
+    // next render (the edit's save/cancel triggers one).
+    if (target === state.currentChat && state.view === 'chat' && !isCurrentChatGenerating() && !inlineEditOpen()) renderChat();
   } catch (err) {
     devLog('ERR', `chat compression failed: ${err.message}`);
   } finally {
@@ -622,6 +673,7 @@ async function appendToChat(msg) {
 // Character / chat selection
 
 export async function selectCharacter(character) {
+  const token = ++selectionSeq;
   state.selectedCharacter = character;
   state.view = 'chat';
   state.undoStack = [];
@@ -633,12 +685,15 @@ export async function selectCharacter(character) {
   }
   const charName = character.card.data.name;
   const chats = await window.tavern.chats.list(charName);
+  if (token !== selectionSeq) return; // a newer selection took over meanwhile
   if (chats.length) {
-    await loadChat(chats[0].file); // reuses a live run's chat, clears unread
+    await loadChat(chats[0].file, token); // reuses a live run's chat, clears unread
   } else {
-    await newChat({ render: false });
+    await newChat({ render: false, token });
+    if (token !== selectionSeq) return;
     renderChat({ scrollBottom: true });
   }
+  if (token !== selectionSeq) return;
   cb.renderSidebar?.();
 }
 
@@ -657,10 +712,11 @@ export async function refreshConversations() {
 }
 
 export async function selectConversation(file) {
+  const token = ++selectionSeq;
   state.view = 'chat';
   state.selectedCharacter = ASSISTANT_CHARACTER;
   pendingAttachments = [];
-  await loadChat(file);
+  await loadChat(file, token);
 }
 
 export async function deleteConversation(file) {
@@ -691,19 +747,26 @@ export async function renameConversation(file, title) {
   // them out of the rewrite or the finishing run would append a duplicate.
   await persistChatMetadataFor(ASSISTANT_NAME, chat);
   await refreshConversations();
-  if (state.currentChat?.file === file && state.view === 'chat') renderChat();
+  if (state.currentChat?.file === file && state.view === 'chat') {
+    // An open inline edit must survive the rename: patch the header only
+    if (inlineEditOpen()) updateChatTitleInPlace(title);
+    else renderChat();
+  }
 }
 
 // ---------------------------------------------------------------------------
 
-export async function newChat({ render = true } = {}) {
+export async function newChat({ render = true, token = ++selectionSeq } = {}) {
   const character = state.selectedCharacter;
   if (!character) return;
   const data = character.card.data;
-  state.currentChat = await window.tavern.chats.create(data.name, userName());
+  const created = await window.tavern.chats.create(data.name, userName());
+  if (token !== selectionSeq) return; // user switched elsewhere while the file was created
+  state.currentChat = created;
   state.undoStack = [];
   pendingAttachments = [];
   if (isChatMode()) await refreshConversations();
+  if (token !== selectionSeq) return;
 
   // Greeting message with alternate greetings as swipes
   if (data.first_mes) {
@@ -715,18 +778,21 @@ export async function newChat({ render = true } = {}) {
       mes: data.first_mes,
       ...(swipes.length > 1 ? { swipes, swipe_id: 0 } : {}),
     };
-    state.currentChat.messages.push(greeting);
-    await persistChat();
+    created.messages.push(greeting);
+    await persistChatFor(data.name, created);
+    if (token !== selectionSeq) return;
   }
   if (render) renderChat({ scrollBottom: true });
 }
 
-export async function loadChat(file) {
+export async function loadChat(file, token = ++selectionSeq) {
   const charName = state.selectedCharacter.card.data.name;
   // A mid-stream run keeps its chat live in memory — reuse it so the reply
   // keeps streaming in place instead of loading the stale on-disk copy.
   const run = runFor(charName, file);
-  state.currentChat = run ? run.chat : await window.tavern.chats.load(charName, file);
+  const loaded = run ? run.chat : await window.tavern.chats.load(charName, file);
+  if (token !== selectionSeq) return; // a newer selection took over meanwhile
+  state.currentChat = loaded;
   state.undoStack = [];
   clearUnread(charName, file);
   renderChat({ scrollBottom: true });
@@ -839,8 +905,16 @@ export function renderChat({ scrollBottom = false } = {}) {
                 'span',
                 {
                   class: 'meta-link',
+                  role: 'button',
+                  tabindex: 0,
                   title: t('chat.compressedTitle'),
                   onclick: () => openSummaryEditor(),
+                  onkeydown: (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      openSummaryEditor();
+                    }
+                  },
                 },
                 t('chat.compressedCount', { count: compressedCount })
               )
@@ -859,16 +933,16 @@ export function renderChat({ scrollBottom = false } = {}) {
         },
         config.model || t('chat.chooseModel')
       ),
-      el('button', {
+      iconBtn({
         class: `btn-icon${state.currentChat?.metadata?.authorsNote?.text ? ' active' : ''}`,
         title: isChatMode() ? t('chat.instructionsTitle') : t('chat.authorsNoteTitle'),
         'aria-label': isChatMode() ? t('chat.instructionsAria') : t('chat.authorsNoteAria'),
-        onclick: () => openAuthorsNote(),
+        onclick: () => openAuthorsNote(), label: t('label.note'),
       }, '📝'),
-      el('button', { class: 'btn-icon', title: t('chat.searchTitle'), 'aria-label': t('chat.search'), onclick: () => openSearch() }, '🔍'),
-      el('button', { class: 'btn-icon', title: t('chat.historyTitle'), 'aria-label': t('chat.history'), onclick: () => openHistory() }, '🕘'),
-      el('button', { class: 'btn-icon', title: t('chat.exportThisChat'), 'aria-label': t('chat.exportThisChat'), onclick: () => exportCurrentChat() }, '⬆'),
-      el('button', { class: 'btn-icon', title: t('chat.newChatTitle'), 'aria-label': t('chat.newChat'), onclick: () => newChat() }, '＋')
+      iconBtn({ class: 'btn-icon', title: t('chat.searchTitle', { mod: MOD }), 'aria-label': t('chat.search'), label: t('label.search'), onclick: () => openSearch() }, '🔍'),
+      iconBtn({ class: 'btn-icon', title: t('chat.historyTitle', { mod: MOD }), 'aria-label': t('chat.history'), label: t('label.history'), onclick: () => openHistory() }, '🕘'),
+      iconBtn({ class: 'btn-icon', title: t('chat.exportThisChat'), 'aria-label': t('chat.exportThisChat'), label: t('label.export'), onclick: () => exportCurrentChat() }, '⬆'),
+      iconBtn({ class: 'btn-icon', title: t('chat.newChatTitle', { mod: MOD }), 'aria-label': t('chat.newChat'), label: t('label.new'), onclick: () => newChat() }, '＋')
     )
   );
 
@@ -905,6 +979,9 @@ export function renderChat({ scrollBottom = false } = {}) {
   for (let index = renderWindowStart; index < messages.length; index++) {
     messagesEl.append(messageEl(messages[index], index, msgPersona, lastAssistant));
   }
+  if (!messages.length && state.currentChat) {
+    messagesEl.append(el('div', { class: 'empty-chat-hint hint', style: { textAlign: 'center', margin: 'auto', opacity: 0.7 } }, t('chat.emptyChatHint')));
+  }
   if (notice.error) {
     messagesEl.append(
       el(
@@ -935,7 +1012,7 @@ export function renderChat({ scrollBottom = false } = {}) {
   // Floating scroll-to-bottom button for long chats
   const scrollBtn = el(
     'button',
-    { id: 'scroll-bottom-btn', title: t('chat.jumpToLatest'), onclick: () => scrollToBottom(true) },
+    { id: 'scroll-bottom-btn', title: t('chat.jumpToLatest'), 'aria-label': t('chat.jumpToLatest'), onclick: () => scrollToBottom(true) },
     '↓'
   );
   root.append(scrollBtn);
@@ -1019,7 +1096,7 @@ export function renderChat({ scrollBottom = false } = {}) {
   // (drag the handle above the bar; double-click resets)
   const input = el('textarea', {
     id: 'chat-input',
-    placeholder: imageMode ? t('chat.imagePlaceholder') : t('chat.messagePlaceholder', { name: data.name }),
+    placeholder: isImageMode() ? t('chat.imagePlaceholder') : t('chat.messagePlaceholder', { name: data.name }),
     rows: 1,
   });
   const baseInputHeight = () =>
@@ -1111,40 +1188,42 @@ export function renderChat({ scrollBottom = false } = {}) {
     if (staged) renderChat();
   });
 
+  // Only the conversation whose draft is being impersonated has Send held;
+  // the toggle itself is single-flight (one impersonation at a time).
+  const impersonatingHere = impersonatingKey != null && impersonatingKey === draftKey;
   const sendBtn = isCurrentChatGenerating()
     ? el('button', { class: 'btn btn-danger', onclick: () => stopGeneration() }, t('chat.stop'))
-    : el('button', { class: 'btn btn-primary', disabled: impersonating, onclick: () => sendMessage() }, t('chat.send'));
-  const attachBtn = el(
-    'button',
-    { class: 'btn-icon attach-btn', title: t('chat.attachTitle'), 'aria-label': t('chat.attachTitle'), onclick: () => attachFiles() },
+    : el('button', { class: 'btn btn-primary', disabled: impersonatingHere, onclick: () => sendMessage() }, t('chat.send'));
+  const attachBtn = iconBtn({ class: 'btn-icon attach-btn', title: t('chat.attachTitle'), 'aria-label': t('chat.attachTitle'), label: t('label.attach'), onclick: () => attachFiles() },
     '📎'
   );
   const impersonateBtn = !isChatMode()
-    ? el(
-        'button',
-        {
-          class: `btn-icon attach-btn${impersonating ? ' active' : ''}`,
+    ? iconBtn({
+          class: `btn-icon attach-btn${impersonatingHere ? ' active' : ''}`,
           title: t('chat.impersonateTitle', { name: userName() }),
           'aria-label': t('chat.impersonateAria'),
-          disabled: isCurrentChatGenerating() || impersonating,
+          label: t('label.impersonate'),
+          disabled: isCurrentChatGenerating() || impersonatingKey != null,
           onclick: () => impersonate(),
         },
-        impersonating ? '…' : '👤'
+        impersonatingHere ? '…' : '👤'
       )
     : null;
   const imageGen = state.settings.imageGen ?? {};
-  if (!imageGen.enabled) imageMode = false;
+  if (!imageGen.enabled) imageModes.clear();
+  const imageMode = isImageMode();
   const imageBtn = imageGen.enabled
-    ? el(
-        'button',
-        {
+    ? iconBtn({
           class: `btn-icon attach-btn img-toggle${imageMode ? ' active' : ''}`,
           'aria-label': imageMode ? t('chat.imageModeOnAria') : t('chat.imageModeOffAria'),
           title: imageMode
             ? t('chat.imageModeOnTitle', { model: imageApiConfig().model })
             : t('chat.imageModeOffTitle', { model: imageApiConfig().model }),
+          label: t('label.image'),
           onclick: () => {
-            imageMode = !imageMode;
+            if (draftKey == null) return;
+            if (imageModes.get(draftKey)) imageModes.delete(draftKey);
+            else imageModes.set(draftKey, true);
             renderChat();
           },
         },
@@ -1166,6 +1245,7 @@ export function renderChat({ scrollBottom = false } = {}) {
             el('button', {
               class: 'chip-remove',
               title: t('chat.remove'),
+              'aria-label': `${t('chat.remove')} ${a.name}`,
               onclick: () => {
                 pendingAttachments.splice(i, 1);
                 renderChat();
@@ -1189,7 +1269,7 @@ export function renderChat({ scrollBottom = false } = {}) {
     el(
       'div',
       { class: 'input-hint' },
-      el('span', {}, state.settings.sendOnEnter ? t('chat.hintEnter') : t('chat.hintMetaEnter')),
+      el('span', {}, state.settings.sendOnEnter ? t('chat.hintEnter') : t('chat.hintMetaEnter', { mod: MOD })),
       draftTokens
     )
   );
@@ -1296,9 +1376,11 @@ function attachmentStrip(msg) {
               loading: 'lazy',
               decoding: 'async',
             }),
-            el('button', {
+            iconBtn({
               class: 'btn-icon img-save-btn',
               title: t('chat.saveImageTitle'),
+              'aria-label': t('chat.saveImage'),
+          label: t('label.save'),
               onclick: (e) => {
                 e.stopPropagation();
                 saveAttachmentToDisk(a);
@@ -1348,16 +1430,19 @@ function messageEl(msg, index, persona = activePersona(), lastAssistant = lastAs
   const actions = el(
     'div',
     { class: 'msg-actions' },
-    el('button', { class: 'btn-icon', title: t('common.copy'), 'aria-label': t('chat.copyMessage'), onclick: () => { navigator.clipboard.writeText(msg.mes); toast(t('common.copied')); } }, '⧉'),
-    el('button', { class: 'btn-icon', title: t('chat.edit'), 'aria-label': t('chat.editMessage'), onclick: () => editMessage(msg, index) }, '✎'),
+    iconBtn({ class: 'btn-icon', title: t('common.copy'), 'aria-label': t('chat.copyMessage'), label: t('label.copy'), onclick: () => { navigator.clipboard.writeText(msg.mes); toast(t('common.copied')); } }, '⧉'),
+    iconBtn({ class: 'btn-icon', title: t('chat.edit'), 'aria-label': t('chat.editMessage'), label: t('label.edit'), onclick: () => editMessage(msg, index) }, '✎'),
     isLastAssistant
-      ? el('button', { class: 'btn-icon', title: t('chat.regenerateTitle'), 'aria-label': t('chat.regenerateAria'), onclick: () => regenerateLast() }, '↻')
+      ? iconBtn({ class: 'btn-icon', title: t('chat.regenerateTitle', { mod: MOD }), 'aria-label': t('chat.regenerateAria'), label: t('label.regenerate'), onclick: () => regenerateLast() }, '↻')
       : null,
     isLastAssistant && msg.mes.trim()
-      ? el('button', { class: 'btn-icon', title: t('chat.continueResponse'), 'aria-label': t('chat.continueResponse'), onclick: () => continueLast() }, '⤻')
+      ? iconBtn({ class: 'btn-icon', title: t('chat.continueResponse'), 'aria-label': t('chat.continueResponse'), label: t('label.cont'), onclick: () => continueLast() }, '⤻')
       : null,
-    el('button', { class: 'btn-icon', title: t('chat.branch'), 'aria-label': t('chat.branch'), onclick: () => branchFrom(index) }, '⑂'),
-    el('button', { class: 'btn-icon', title: t('common.delete'), 'aria-label': t('chat.deleteMessage'), onclick: () => deleteMessage(index) }, '🗑')
+    iconBtn({ class: 'btn-icon', title: t('chat.branch'), 'aria-label': t('chat.branch'), label: t('label.branch'), onclick: () => branchFrom(index) }, '⑂'),
+    // No delete on the message still being streamed into — the run owns it
+    msg.__streaming
+      ? null
+      : iconBtn({ class: 'btn-icon', title: t('common.delete'), 'aria-label': t('chat.deleteMessage'), label: t('label.delete'), onclick: () => deleteMessage(index) }, '🗑')
   );
 
   const body = el(
@@ -1399,12 +1484,13 @@ function messageEl(msg, index, persona = activePersona(), lastAssistant = lastAs
       el(
         'div',
         { class: 'swipe-bar' },
-        el('button', { class: 'btn-icon', title: t('chat.prevResponse'), 'aria-label': t('chat.prevResponse'), disabled: current <= 1, onclick: () => swipeAt(index, -1) }, '‹'),
+        iconBtn({ class: 'btn-icon', title: t('chat.prevResponse'), 'aria-label': t('chat.prevResponse'), label: t('label.prev'), disabled: current <= 1, onclick: () => swipeAt(index, -1) }, '‹'),
         el('span', {}, `${current} / ${count}`),
-        el('button', {
+        iconBtn({
           class: 'btn-icon',
           title: count > current ? t('chat.nextResponse') : t('chat.generateAlternative'),
           'aria-label': count > current ? t('chat.nextResponse') : t('chat.generateAlternative'),
+          label: t('label.next'),
           disabled: !canGenerate && current >= count,
           onclick: () => swipeAt(index, 1),
         }, '›')
@@ -1419,8 +1505,8 @@ function messageEl(msg, index, persona = activePersona(), lastAssistant = lastAs
 }
 const msgForNode = new WeakMap(); // .msg element -> message, for height measurement
 
-function lastAssistantIndex() {
-  const messages = state.currentChat?.messages ?? [];
+function lastAssistantIndex(chat = state.currentChat) {
+  const messages = chat?.messages ?? [];
   for (let i = messages.length - 1; i >= 0; i--) {
     if (!messages[i].is_user && !messages[i].is_system) return i;
   }
@@ -1539,12 +1625,18 @@ async function resolveAttachments(messages, contextSize = 0) {
 
 export async function sendMessage({ asImage = false } = {}) {
   if (isCurrentChatGenerating() || !state.selectedCharacter || !state.currentChat) return;
+  // Pin the conversation now: every await below is a chance for the user to
+  // switch chats, and the reply must land where the message was sent.
+  const chat = state.currentChat;
+  const character = state.selectedCharacter;
+  const charName = character.card.data.name;
+  const key = convKey(charName, chat.file);
   // Explicit request or the 🎨 toggle — either routes this turn to the image model
-  const useImage = (asImage || imageMode) && !!state.settings.imageGen?.enabled;
+  const useImage = (asImage || imageModes.get(key) === true) && !!state.settings.imageGen?.enabled;
   const input = document.getElementById('chat-input');
   const text = input?.value.trim() ?? '';
   const attachments = pendingAttachments;
-  const lastIsUser = state.currentChat.messages.at(-1)?.is_user;
+  const lastIsUser = chat.messages.at(-1)?.is_user;
   if (useImage && !text && !attachments.length) {
     toast(t('chat.describeImage'), 'error');
     return;
@@ -1561,21 +1653,21 @@ export async function sendMessage({ asImage = false } = {}) {
       mes: text,
       ...(attachments.length ? { extra: { attachments } } : {}),
     };
-    state.currentChat.messages.push(userMsg);
+    chat.messages.push(userMsg);
     pendingAttachments = [];
+    if (input) input.value = '';
+    chatDrafts.delete(key);
     // Chat mode: title the conversation after its first message
-    if (isChatMode() && !state.currentChat.metadata.title && text) {
-      state.currentChat.metadata.title = truncateChars(text, 64);
-      await persistChat();
+    if (isChatMode() && !chat.metadata.title && text) {
+      chat.metadata.title = truncateChars(text, 64);
+      await persistChatFor(charName, chat);
       await refreshConversations();
     } else {
-      await appendToChat(userMsg);
+      await appendToChatFor(charName, chat, userMsg);
     }
-    if (input) input.value = '';
-    if (renderedDraftKey != null) chatDrafts.delete(renderedDraftKey);
   }
   // 🎨 routes this turn to the dedicated image provider/model
-  await generateResponse(useImage ? { configOverride: imageApiConfig() } : {});
+  await generateResponse({ chat, character, ...(useImage ? { configOverride: imageApiConfig() } : {}) });
 }
 
 // Models whose pricing was looked up but not found this session, so an
@@ -1623,6 +1715,11 @@ async function generateResponse({
   configOverride = null,
   chat = state.currentChat,
   character = state.selectedCharacter,
+  // Failed-run cleanup hints (see finishGeneration): the swipe slot this
+  // run pushed, or the text it cleared from an existing message.
+  pushedSwipe = false,
+  prevMes = null,
+  prevDate = null,
 } = {}) {
   if (!chat || !character || runForChat(chat)) return; // one run per conversation
   const charName = character.card.data.name;
@@ -1635,32 +1732,66 @@ async function generateResponse({
     if (foreground()) renderChat();
     return;
   }
-  if (!configOverride) recordRecentModel(config);
-  config.params.context_size = await resolveContextSize(config);
+  // Register the run BEFORE the first await: a second Send (double-click,
+  // Enter twice) during context/attachment resolution must see the chat as
+  // busy, or two replies race into the same conversation.
+  const requestId = uuid();
+  const run = {
+    requestId,
+    character,
+    charName,
+    file: chat.file,
+    chat,
+    msg: intoMessage,
+    configOverride,
+    pushedSwipe,
+    prevMes,
+    prevDate,
+    provider: config.provider,
+    model: config.model,
+    promptTokens: 0,
+  };
+  state.runs.set(requestId, run);
+  let prompt;
+  let stats;
+  try {
+    if (!configOverride) recordRecentModel(config);
+    config.params.context_size = await resolveContextSize(config);
 
-  // Compressed messages are represented by their summary, not resent verbatim
-  const summary = chat.metadata.summary?.text ?? '';
-  const summaryStart = Math.min(chat.metadata.summary?.upToIndex ?? 0, chat.messages.length);
-  const fullHistory = historyUpTo === null ? chat.messages : chat.messages.slice(0, historyUpTo);
-  const history = fullHistory.slice(Math.min(summaryStart, fullHistory.length));
-  const chatHistory = await resolveAttachments(history.filter((m) => !m.__streaming), config.params.context_size);
-  const stats = {};
-  const prompt = buildMessages({
-    character: character.card.data,
-    chatHistory,
-    userName: userName(),
-    // Chat mode: plain assistant prompt, no role-play scaffolding
-    systemPromptOverride: isChatMode() ? chatSystemPrompt() : state.settings.systemPromptOverride,
-    worldInfoEntries: isChatMode() ? [] : applicableWorldEntries(state.worlds, character.filename),
-    persona: activePersona(),
-    reminderPrompt: isChatMode() ? '' : state.settings.reminderPrompt,
-    authorsNote: chat.metadata.authorsNote?.text ?? '',
-    authorsNoteDepth: chat.metadata.authorsNote?.depth ?? 4,
-    summary,
-    contextSize: config.params.context_size,
-    maxResponseTokens: config.params.max_tokens,
-    stats,
-  });
+    // Compressed messages are represented by their summary, not resent verbatim
+    const summary = chat.metadata.summary?.text ?? '';
+    const summaryStart = Math.min(chat.metadata.summary?.upToIndex ?? 0, chat.messages.length);
+    const fullHistory = historyUpTo === null ? chat.messages : chat.messages.slice(0, historyUpTo);
+    const history = fullHistory.slice(Math.min(summaryStart, fullHistory.length));
+    const chatHistory = await resolveAttachments(history.filter((m) => !m.__streaming), config.params.context_size);
+    stats = {};
+    prompt = buildMessages({
+      character: character.card.data,
+      chatHistory,
+      userName: userName(),
+      // Chat mode: plain assistant prompt, no role-play scaffolding
+      systemPromptOverride: isChatMode() ? chatSystemPrompt() : state.settings.systemPromptOverride,
+      worldInfoEntries: isChatMode() ? [] : applicableWorldEntries(state.worlds, character.filename),
+      persona: activePersona(),
+      reminderPrompt: isChatMode() ? '' : state.settings.reminderPrompt,
+      authorsNote: chat.metadata.authorsNote?.text ?? '',
+      authorsNoteDepth: chat.metadata.authorsNote?.depth ?? 4,
+      summary,
+      contextSize: config.params.context_size,
+      maxResponseTokens: config.params.max_tokens,
+      stats,
+    });
+  } catch (err) {
+    // Nothing was sent: unregister the placeholder run so the chat isn't
+    // stuck "generating", and report instead of throwing into a click handler
+    state.runs.delete(requestId);
+    devLog('ERR', err.message);
+    setNotice(charName, chat.file, { error: decorateModelError(err.message, { imageTurn: !!configOverride }) });
+    if (foreground()) renderChat();
+    return;
+  }
+  // The chat may have been deleted or the run stopped while resolving
+  if (!state.runs.has(requestId)) return;
   const trimmed = stats.trimmedCount ?? 0;
   setNotice(charName, chat.file, { trimmed });
   if (stats.loreDropped) {
@@ -1678,22 +1809,8 @@ async function generateResponse({
   }
   msg.__streaming = true;
   reasoningText.delete(msg); // a fresh attempt starts its thinking from scratch
-
-  const requestId = uuid();
-  const run = {
-    requestId,
-    character,
-    charName,
-    file: chat.file,
-    chat,
-    msg,
-    configOverride,
-    // For the post-reply cost estimate
-    provider: config.provider,
-    model: config.model,
-    promptTokens: stats.promptTokens ?? 0,
-  };
-  state.runs.set(requestId, run);
+  run.msg = msg;
+  run.promptTokens = stats.promptTokens ?? 0; // for the post-reply cost estimate
   // Guarded here (not just inside devLog): stringifying the last message
   // would serialize any attached images' multi-MB data URLs on every send,
   // even with developer mode off.
@@ -1720,7 +1837,16 @@ async function generateResponse({
 /** Stop the given conversation's in-flight generation (default: the one on screen). */
 export function stopGeneration(chat = state.currentChat) {
   const run = runForChat(chat);
-  if (run) window.tavern.llm.stop(run.requestId);
+  if (!run) return;
+  if (!run.msg) {
+    // Still resolving context/attachments — nothing was sent yet, so just
+    // unregister; generateResponse notices and bails before sending.
+    state.runs.delete(run.requestId);
+    if (chat === state.currentChat && state.view === 'chat') renderChat();
+    cb.renderSidebar?.();
+    return;
+  }
+  window.tavern.llm.stop(run.requestId);
 }
 
 /** Retry after a failed generation (error-banner button). */
@@ -1737,16 +1863,18 @@ async function retryLast() {
   else await regenerateLast();
 }
 
-export async function regenerateLast() {
-  if (isCurrentChatGenerating()) return;
-  const idx = lastAssistantIndex();
+export async function regenerateLast({ chat = state.currentChat, character = state.selectedCharacter } = {}) {
+  if (!chat || !character || runForChat(chat)) return;
+  const idx = lastAssistantIndex(chat);
   if (idx < 0) return;
-  pushUndo();
-  const msg = state.currentChat.messages[idx];
+  if (chat === state.currentChat) pushUndo();
+  const msg = chat.messages[idx];
+  const prevMes = msg.mes;
+  const prevDate = msg.send_date;
   msg.mes = '';
   if (msg.swipes) msg.swipes[msg.swipe_id ?? 0] = '';
   msg.send_date = nowISO();
-  await generateResponse({ historyUpTo: idx, intoMessage: msg });
+  await generateResponse({ historyUpTo: idx, intoMessage: msg, chat, character, prevMes, prevDate });
 }
 
 /**
@@ -1760,9 +1888,10 @@ async function continueLast() {
   if (idx < 0) return;
   pushUndo();
   const msg = state.currentChat.messages[idx];
+  const prevMes = msg.mes;
   msg.mes = msg.mes.replace(/\s+$/, ''); // no trailing whitespace in a prefill
   if (msg.swipes) msg.swipes[msg.swipe_id ?? 0] = msg.mes;
-  await generateResponse({ historyUpTo: idx + 1, intoMessage: msg });
+  await generateResponse({ historyUpTo: idx + 1, intoMessage: msg, prevMes });
 }
 
 async function swipeAt(idx, direction) {
@@ -1783,11 +1912,12 @@ async function swipeAt(idx, direction) {
   } else if (idx === lastAssistantIndex()) {
     // Generate a brand-new alternative (only the last message can grow)
     pushUndo();
+    const prevDate = msg.send_date;
     msg.swipes.push('');
     msg.swipe_id = msg.swipes.length - 1;
     msg.mes = '';
     msg.send_date = nowISO();
-    await generateResponse({ historyUpTo: idx, intoMessage: msg });
+    await generateResponse({ historyUpTo: idx, intoMessage: msg, pushedSwipe: true, prevDate });
   }
 }
 
@@ -1802,12 +1932,17 @@ function editMessage(msg, index) {
   const msgEl = messagesEl?.querySelector(`[data-index="${index}"] .msg-body`);
   if (!msgEl) return;
   clear(msgEl);
+  // Pin the conversation: the handlers below await, and the user may switch
+  // chats meanwhile — the save and the regenerated reply belong here.
+  const chat = state.currentChat;
+  const character = state.selectedCharacter;
+  const charName = character.card.data.name;
   const textarea = el('textarea', { rows: 6 }, msg.mes);
   const save = async () => {
-    pushUndo();
+    if (chat === state.currentChat) pushUndo();
     msg.mes = textarea.value;
     if (msg.swipes) msg.swipes[msg.swipe_id ?? 0] = textarea.value;
-    await persistChat();
+    await persistChatFor(charName, chat);
   };
   // Editing a user message can re-run the reply from that point: the reply
   // to the latest message regenerates in place (keeping its swipes); editing
@@ -1828,18 +1963,19 @@ function editMessage(msg, index) {
             'button',
             {
               class: 'btn btn-small',
-              title: rewinds ? t('chat.saveRegenRewindTitle') : t('chat.saveRegenTitle'),
+              title: rewinds ? t('chat.saveRegenRewindTitle', { mod: MOD }) : t('chat.saveRegenTitle'),
               onclick: async () => {
+                if (runForChat(chat)) return;
                 await save();
                 if (lastIsReplyToThis) {
-                  await regenerateLast();
+                  await regenerateLast({ chat, character });
                 } else {
                   if (rewinds) {
                     // Same undo snapshot as the edit itself (save() pushed it)
-                    state.currentChat.messages.splice(index + 1);
-                    await persistChat();
+                    chat.messages.splice(index + 1);
+                    await persistChatFor(charName, chat);
                   }
-                  await generateResponse();
+                  await generateResponse({ chat, character });
                 }
               },
             },
@@ -1863,6 +1999,9 @@ function editMessage(msg, index) {
 }
 
 async function deleteMessage(index) {
+  // Same rule as editMessage/swipeAt: no array mutation while this chat
+  // streams — the run's append/rewrite would race the delete on disk
+  if (isCurrentChatGenerating() || !state.currentChat) return;
   pushUndo();
   state.currentChat.messages.splice(index, 1);
   await persistChat();
@@ -1908,7 +2047,8 @@ async function branchFrom(index) {
  * the input for review rather than sent directly.
  */
 async function impersonate() {
-  if (isCurrentChatGenerating() || impersonating || !state.currentChat || !state.selectedCharacter) return;
+  if (isCurrentChatGenerating() || impersonatingKey != null || !state.currentChat || !state.selectedCharacter) return;
+  const key = currentConvKey();
   const config = apiConfig(state.currentChat.metadata?.model);
   config.params.context_size = await resolveContextSize(config);
   const character = state.selectedCharacter.card.data;
@@ -1935,12 +2075,16 @@ async function impersonate() {
     content: `Write ${name}'s next message in this conversation, from ${name}'s perspective and in ${name}'s voice. Reply with only the message text — no quotation wrapper, no name prefix.`,
   });
   const chatRef = state.currentChat;
-  impersonating = true;
+  impersonatingKey = key;
   renderChat();
   try {
     const text = (await window.tavern.llm.complete(prompt, config))?.trim();
-    impersonating = false;
-    if (state.currentChat !== chatRef) return; // switched away — don't drop the draft into another chat
+    impersonatingKey = null;
+    if (state.currentChat !== chatRef) {
+      // Switched away — park the draft in that conversation's own draft slot
+      if (text) chatDrafts.set(key, { value: text, selStart: text.length, selEnd: text.length });
+      return;
+    }
     renderChat();
     const input = document.getElementById('chat-input');
     if (input && text) {
@@ -1949,7 +2093,7 @@ async function impersonate() {
       input.focus();
     }
   } catch (err) {
-    impersonating = false;
+    impersonatingKey = null;
     if (state.currentChat === chatRef) renderChat();
     toast(t('chat.impersonateFailed', { msg: err.message }), 'error');
   }
@@ -1989,7 +2133,7 @@ function openAuthorsNote() {
           const depth = Math.max(0, Math.min(20, parseInt(depthInput.value, 10) || 4));
           if (text) chat.metadata.authorsNote = { text, depth };
           else delete chat.metadata.authorsNote;
-          await persistChat();
+          await persistChatMetadata(chat); // metadata-only: never rewrites a streaming reply
           overlay.close();
           renderChat();
           toast(text ? t('chat.authorsNoteSaved') : t('chat.authorsNoteCleared'), 'ok');
@@ -2074,7 +2218,7 @@ function openModelSwitcher() {
   const row = (provider, model, sub) =>
     el(
       'div',
-      { class: 'list-row', onclick: () => pick(provider, model) },
+      { class: 'list-row', role: 'option', tabindex: 0, onclick: () => pick(provider, model), onkeydown: activateOnEnter(() => pick(provider, model)) },
       el('div', { class: 'list-main' },
         el('div', { class: 'list-title' }, model),
         el('div', { class: 'list-sub' }, sub ?? PROVIDERS[provider].label))
@@ -2130,18 +2274,24 @@ function openModelSwitcher() {
 /** Ctrl+Tab / Ctrl+Shift+Tab: cycle conversations (chat mode) or characters (role play). */
 export async function cycleConversation(dir) {
   if (state.view !== 'chat') return;
-  if (isChatMode()) {
-    const list = state.conversations;
-    if (list.length < 2) return;
-    const idx = list.findIndex((c) => c.file === state.currentChat?.file);
-    const next = list[(idx + dir + list.length) % list.length];
-    if (next && next.file !== state.currentChat?.file) await selectConversation(next.file);
-  } else {
-    const list = state.characters;
-    if (list.length < 2) return;
-    const idx = list.findIndex((c) => c.filename === state.selectedCharacter?.filename);
-    const next = list[((idx < 0 ? 0 : idx) + dir + list.length) % list.length];
-    if (next && next.filename !== state.selectedCharacter?.filename) await selectCharacter(next);
+  try {
+    if (isChatMode()) {
+      const list = state.conversations;
+      if (list.length < 2) return;
+      const idx = list.findIndex((c) => c.file === state.currentChat?.file);
+      const next = list[(idx + dir + list.length) % list.length];
+      if (next && next.file !== state.currentChat?.file) await selectConversation(next.file);
+    } else {
+      const list = state.characters;
+      if (list.length < 2) return;
+      const idx = list.findIndex((c) => c.filename === state.selectedCharacter?.filename);
+      const next = list[((idx < 0 ? 0 : idx) + dir + list.length) % list.length];
+      if (next && next.filename !== state.selectedCharacter?.filename) await selectCharacter(next);
+    }
+  } catch (err) {
+    // Fired from a keyboard shortcut with nobody awaiting it — surface the failure
+    devLog('ERR', `could not switch conversation: ${err.message}`);
+    toast(err.message, 'error');
   }
 }
 
@@ -2182,22 +2332,24 @@ export async function openHistory() {
   if (!chats.length) list.append(el('p', { style: { color: 'var(--text-dim)' } }, t('chat.noPreviousChats')));
   for (const chatInfo of chats) {
     const isCurrent = chatInfo.file === state.currentChat?.file;
+    const open = async () => { overlay.close(); await loadChat(chatInfo.file); };
     list.append(
       el(
         'div',
-        { class: 'list-row' },
+        { class: 'list-row', role: 'button', tabindex: 0, onkeydown: activateOnEnter(open) },
         el(
           'div',
-          { class: 'list-main', onclick: async () => { overlay.close(); await loadChat(chatInfo.file); } },
+          { class: 'list-main', onclick: open },
           el('div', { class: 'list-title' }, `${new Date(chatInfo.metadata.create_date ?? chatInfo.mtime).toLocaleString(currentLocale())}${isCurrent ? t('chat.currentMarker') : ''}`),
           el('div', { class: 'list-sub' }, `${t('common.nMessages', { count: chatInfo.messageCount })} · ${chatInfo.preview}`)
         ),
-        el('button', { class: 'btn-icon', title: t('sidebar.exportMarkdown'), 'aria-label': t('sidebar.exportMarkdown'), onclick: () => exportChat(charName, chatInfo.file, 'markdown') }, 'MD'),
-        el('button', { class: 'btn-icon', title: t('sidebar.exportJSONL'), 'aria-label': t('sidebar.exportJSONL'), onclick: () => exportChat(charName, chatInfo.file, 'jsonl') }, '{}'),
-        el('button', {
+        iconBtn({ class: 'btn-icon', title: t('sidebar.exportMarkdown'), 'aria-label': t('sidebar.exportMarkdown'), label: t('label.markdown'), onclick: () => exportChat(charName, chatInfo.file, 'markdown') }, 'MD'),
+        iconBtn({ class: 'btn-icon', title: t('sidebar.exportJSONL'), 'aria-label': t('sidebar.exportJSONL'), label: t('label.jsonl'), onclick: () => exportChat(charName, chatInfo.file, 'jsonl') }, '{}'),
+        iconBtn({
           class: 'btn-icon',
           title: t('chat.deleteChat'),
           'aria-label': t('chat.deleteChat'),
+          label: t('label.delete'),
           onclick: async () => {
             const ok = await confirmDialog(t('chat.deleteChatConfirm'));
             if (!ok) return;
@@ -2290,7 +2442,11 @@ export function openSearch(initialQuery = '', initialScope = 'current') {
   content.append(el('div', { class: 'form-inline' }, input, scope), results);
   const overlay = modal(content, { width: 620 });
 
+  // Query token: a slow global search that resolves after the user typed
+  // more must not paint stale rows over the newer query's results.
+  let querySeq = 0;
   async function run() {
+    const mine = ++querySeq;
     const q = input.value.trim();
     clear(results);
     if (q.length < 2) return;
@@ -2318,6 +2474,7 @@ export function openSearch(initialQuery = '', initialScope = 'current') {
       // Chat mode: "all chats" means all assistant conversations
       const scopeName = isChatMode() ? ASSISTANT_NAME : scope.value === 'all' ? null : charName;
       const hits = await window.tavern.chats.search(q, scopeName);
+      if (mine !== querySeq) return; // superseded by a newer query
       if (!hits.length) results.append(el('p', { style: { color: 'var(--text-dim)' } }, t('common.noMatches')));
       for (const hit of hits) {
         results.append(
@@ -2352,14 +2509,30 @@ export function openSearch(initialQuery = '', initialScope = 'current') {
   input.focus();
 }
 
+/** Enter/Space on a focusable non-button row activates it like a click. */
+function activateOnEnter(fn) {
+  return (e) => {
+    if (e.target !== e.currentTarget) return; // buttons inside the row handle their own keys
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      fn();
+    }
+  };
+}
+
 function searchRow(title, text, q, onclick) {
   const snippet = el('div', { class: 'list-sub search-snippet' });
-  const safe = escapeHtml(text.slice(0, 200));
-  const safeQ = escapeHtml(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  snippet.innerHTML = safe.replace(new RegExp(`(${safeQ})`, 'gi'), '<mark>$1</mark>');
+  // Highlight on the RAW text and escape each segment separately: matching
+  // against escaped HTML would let a query like "amp" hit inside "&amp;".
+  const raw = text.slice(0, 200);
+  const pattern = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+  snippet.innerHTML = raw
+    .split(pattern)
+    .map((part, i) => (i % 2 === 1 ? `<mark>${escapeHtml(part)}</mark>` : escapeHtml(part)))
+    .join('');
   return el(
     'div',
-    { class: 'list-row', onclick },
+    { class: 'list-row', role: 'button', tabindex: 0, onclick, onkeydown: activateOnEnter(onclick) },
     el('div', { class: 'list-main' }, el('div', { class: 'list-title' }, title), snippet)
   );
 }

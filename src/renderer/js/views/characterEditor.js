@@ -27,7 +27,8 @@ export function openCharacterEditor(character) {
     system_prompt: existing?.system_prompt ?? '',
     post_history_instructions: existing?.post_history_instructions ?? '',
     alternate_greetings: [...(existing?.alternate_greetings ?? [])],
-    character_book: existing?.character_book ?? null,
+    // Deep clone so Cancel discards lore edits (entries are mutated in place)
+    character_book: existing?.character_book ? structuredClone(existing.character_book) : null,
     tags: [...(existing?.tags ?? [])],
     creator: existing?.creator ?? '',
     creator_notes: existing?.creator_notes ?? '',

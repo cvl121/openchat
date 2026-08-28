@@ -155,23 +155,20 @@ export function registerIPC() {
   ipcMain.handle('files:saveUpload', wrap((name, dataURL) => storage.saveUploadData(name, dataURL)));
   ipcMain.handle('files:readUpload', wrap((file) => storage.readUploadData(file)));
   // Save an upload (generated image, attachment) somewhere the user picks.
-  // The save dialog defaults to Downloads; destPath skips the dialog (tests).
+  // The destination always comes from the save dialog — never from the
+  // renderer, which would let a compromised page write anywhere on disk.
   ipcMain.handle(
     'files:exportUpload',
-    wrap(async (file, destPath) => {
-      let dest = destPath;
-      if (!dest) {
-        const win = BrowserWindow.getFocusedWindow();
-        const ext = path.extname(file);
-        const { canceled, filePath } = await dialog.showSaveDialog(win, {
-          defaultPath: path.join(app.getPath('downloads'), file),
-          filters: ext ? [{ name: ext.slice(1).toUpperCase(), extensions: [ext.slice(1)] }] : [],
-        });
-        if (canceled || !filePath) return null;
-        dest = filePath;
-      }
-      storage.exportUpload(file, dest);
-      return dest;
+    wrap(async (file) => {
+      const win = BrowserWindow.getFocusedWindow();
+      const ext = path.extname(file);
+      const { canceled, filePath } = await dialog.showSaveDialog(win, {
+        defaultPath: path.join(app.getPath('downloads'), path.basename(file)),
+        filters: ext ? [{ name: ext.slice(1).toUpperCase(), extensions: [ext.slice(1)] }] : [],
+      });
+      if (canceled || !filePath) return null;
+      storage.exportUpload(file, filePath);
+      return filePath;
     })
   );
 

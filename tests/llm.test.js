@@ -759,3 +759,61 @@ test('reasoning effort setting maps to the OpenRouter reasoning param', async ()
     server.close();
   }
 });
+
+test('claude: never sends temperature and top_p together', async () => {
+  const server = await startMockServer();
+  try {
+    const cfg = config(server, { provider: 'claude', model: 'claude-sonnet-5' });
+    cfg.params.stream_response = false;
+    await sendMessage([{ role: 'user', content: 'hi' }], cfg, null);
+    let body = server.lastRequest.body;
+    assert.equal(body.temperature, 0.7);
+    assert.ok(!('top_p' in body));
+    cfg.params.top_p = 0.9;
+    await sendMessage([{ role: 'user', content: 'hi' }], cfg, null);
+    body = server.lastRequest.body;
+    assert.equal(body.top_p, 0.9);
+    assert.ok(!('temperature' in body));
+  } finally {
+    server.close();
+  }
+});
+
+test('multi-line SSE data fields are joined before parsing', async () => {
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    // One event whose JSON payload is split across two data: lines
+    const json = JSON.stringify({ choices: [{ delta: { content: 'joined' } }] }, null, 1);
+    res.write(json.split('\n').map((l) => `data: ${l}`).join('\n') + '\n\n');
+    res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: ' up' } }] })}\n\n`);
+    res.end('data: [DONE]\n\n');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const full = await sendMessage([{ role: 'user', content: 'hi' }], config(server), null);
+    assert.equal(full, 'joined up');
+  } finally {
+    server.close();
+  }
+});
+
+test('a malformed 200 body in non-streaming mode fails once without retrying', async () => {
+  let requests = 0;
+  const server = http.createServer((req, res) => {
+    requests++;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end('{"choices": [oops');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const cfg = config(server);
+    cfg.params.stream_response = false;
+    await assert.rejects(
+      sendMessage([{ role: 'user', content: 'hi' }], cfg, null),
+      (err) => err instanceof LLMError && /malformed JSON/.test(err.message)
+    );
+    assert.equal(requests, 1);
+  } finally {
+    server.close();
+  }
+});

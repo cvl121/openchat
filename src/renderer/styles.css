@@ -13,6 +13,12 @@
   --accent-hover: #8d80e5;
   --accent-text: #ffffff;
   --danger: #d9596a;
+  --danger-hover: #e8707f;
+  --danger-text: #ffffff;
+  --info: #6aa9e0;
+  --mark-bg: #e8b75f;
+  --mark-text: #000000;
+  --accent-text-dim: rgba(255, 255, 255, 0.75);
   --ok: #5fb878;
   --user-bubble: #34304e;
   --char-bubble: #22222c;
@@ -38,6 +44,10 @@
   --quote-color: #a86d10;
   --action-color: #6a5aac;
   --narrative-color: #3a3a46;
+  --danger-hover: #c2404f;
+  --info: #2a6fb0;
+  --mark-bg: #f3cf6a;
+  --mark-text: #16161f;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -108,7 +118,8 @@ input[type='checkbox'] {
 .btn:hover { background: var(--bg-hover); }
 .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .btn-primary:hover { background: var(--accent-hover); }
-.btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn-danger { background: var(--danger); border-color: var(--danger); color: var(--danger-text); }
+.btn-danger:hover { background: var(--danger-hover); border-color: var(--danger-hover); }
 .btn-small { padding: 4px 10px; font-size: 12px; }
 .btn-icon {
   background: none; border: none; cursor: pointer; color: var(--text-dim);
@@ -119,6 +130,14 @@ input[type='checkbox'] {
   height: 26px; min-width: 26px; padding: 0 5px;
 }
 .btn-icon:hover { background: var(--bg-hover); color: var(--text); }
+/* "Text labels" setting: icon buttons become compact bordered text buttons */
+.btn-icon.btn-text {
+  font-size: 12px; font-weight: 500; padding: 0 8px; height: 24px;
+  border: 1px solid var(--border); background: var(--bg-input); white-space: nowrap;
+}
+.btn-icon.btn-text:hover { background: var(--bg-hover); }
+.msg-actions .btn-icon.btn-text { height: 22px; font-size: 11px; padding: 0 6px; }
+body.text-buttons #sidebar-nav .nav-btn > span:first-child { display: none; }
 .btn:disabled, .btn-primary:disabled { opacity: 0.5; cursor: default; }
 
 /* ---------------------------------------------------------------- Sidebar */
@@ -204,7 +223,7 @@ body.platform-mac:has(#app.sidebar-collapsed) #sidebar-toggle { left: 80px; }
 }
 .conv-row:hover { background: var(--bg-hover); }
 .conv-row.selected { background: var(--accent); color: var(--accent-text); }
-.conv-row.selected .conv-sub { color: rgba(255, 255, 255, 0.75); }
+.conv-row.selected .conv-sub { color: var(--accent-text-dim); }
 .conv-info { flex: 1; min-width: 0; }
 .conv-name {
   font-weight: 600;
@@ -274,7 +293,8 @@ body.platform-mac:has(#app.sidebar-collapsed) #sidebar-toggle { left: 80px; }
   font-size: 12.5px;
 }
 .nav-btn:hover { background: var(--bg-hover); color: var(--text); }
-.nav-btn.active { color: var(--accent); font-weight: 600; }
+/* Emphasis by color/background only — a weight change reflows the neighbours */
+.nav-btn.active { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 /* Emoji widths vary per glyph — a fixed slot keeps the labels in a column */
 #sidebar-nav .nav-btn { white-space: nowrap; padding: 7px 8px; }
 #sidebar-nav .nav-btn span {
@@ -647,6 +667,9 @@ body.platform-mac:has(#app.sidebar-collapsed) #sidebar-toggle { left: 80px; }
   overflow-y: auto;
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
 }
+/* The box is focused programmatically for the focus trap — no ring on the
+   container itself; interactive children keep theirs */
+.modal-box:focus, .modal-box:focus-visible { outline: none; }
 .modal-box h2 { font-size: 16px; margin-bottom: 14px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .confirm-message { line-height: 1.5; }
@@ -658,6 +681,11 @@ body.platform-mac:has(#app.sidebar-collapsed) #sidebar-toggle { left: 80px; }
   cursor: pointer;
 }
 .list-row:hover { background: var(--bg-hover); }
+/* Keyboard-operable rows/cards (role=button) get the accent ring */
+.conv-row:focus-visible, .list-row:focus-visible, .char-card:focus-visible {
+  outline: 1.5px solid var(--accent);
+  outline-offset: -1px;
+}
 .list-row .list-main { flex: 1; min-width: 0; }
 .list-row .list-title { font-weight: 600; }
 .list-row .list-sub { font-size: 11.5px; color: var(--text-dim); }
@@ -723,7 +751,7 @@ body.platform-mac:has(#app.sidebar-collapsed) #sidebar-toggle { left: 80px; }
   padding: 8px;
   user-select: text;
 }
-.devlog .log-REQ { color: #6aa9e0; }
+.devlog .log-REQ { color: var(--info); }
 .devlog .log-RES { color: var(--ok); }
 .devlog .log-ERR { color: var(--danger); }
 .devlog .log-INFO { color: var(--text-dim); }
@@ -731,8 +759,9 @@ body.platform-mac:has(#app.sidebar-collapsed) #sidebar-toggle { left: 80px; }
 
 /* --------------------------------------------------------------- Search */
 
-.search-results { max-height: 50vh; overflow-y: auto; margin-top: 10px; }
-.search-snippet mark { background: var(--quote-color); color: #000; border-radius: 2px; }
+/* Fixed floor so the dialog doesn't jump when "No matches." replaces a list */
+.search-results { min-height: 160px; max-height: 50vh; overflow-y: auto; margin-top: 10px; }
+.search-snippet mark { background: var(--mark-bg); color: var(--mark-text); border-radius: 2px; }
 
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
@@ -917,7 +946,7 @@ body.platform-mac:has(#app.sidebar-collapsed) #sidebar-toggle { left: 80px; }
   color: var(--text);
   font-size: 12.5px;
 }
-.ctx-menu-item:hover { background: var(--bg-hover); }
+.ctx-menu-item:hover, .ctx-menu-item:focus { background: var(--bg-hover); outline: none; }
 .ctx-menu-item.danger { color: var(--danger); }
 
 /* CJK line breaking: strict rules keep small kana / punctuation off line

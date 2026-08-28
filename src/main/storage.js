@@ -82,6 +82,23 @@ export function resolveDataPath(relPath) {
 }
 
 /**
+ * Join `name` onto `parent` and assert the result stays strictly inside it.
+ * Every delete/rename/read path built from a caller-supplied name (character,
+ * chat, world, preset, upload filenames) goes through here, so a name that
+ * survives sanitizeFilename but still resolves outside its folder ("..", an
+ * absolute path, a symlink-free traversal) throws instead of touching the
+ * wrong file.
+ */
+export function safeChild(parent, name) {
+  const root = path.resolve(parent);
+  const full = path.resolve(root, String(name ?? ''));
+  if (full === root || !full.startsWith(root + path.sep)) {
+    throw new Error('Path escapes its directory');
+  }
+  return full;
+}
+
+/**
  * Write a file atomically: write to a temp sibling, then rename over the target.
  * rename(2) is atomic within a filesystem, so a reader (or a crash) never sees a
  * half-written file — the destination is either the old contents or the new ones.
@@ -161,6 +178,7 @@ export const DEFAULT_SETTINGS = {
     fontSize: 14,
   },
   sendOnEnter: true,
+  textButtons: false, // short text labels instead of emoji/glyph icon buttons
   unreadConversations: {}, // "CharName/chatfile.jsonl" -> true (reply finished while backgrounded)
   modelContextCache: {}, // "provider|modelId" -> advertised max context (0 = provider doesn't report one)
   modelPricingCache: {}, // "provider|modelId" -> {inPerM, outPerM} USD per million tokens
@@ -172,20 +190,59 @@ export const DEFAULT_SETTINGS = {
   developerMode: false,
   onboardingComplete: false,
   sidebarWidth: 280,
-  chatInputHeight: 38, // user-resizable input bar base height (px)
-  chatInputHeight: 76,
+  chatInputHeight: 38, // user-resizable input bar base height (px; the renderer clamps to >= 38)
 };
 
 function settingsPath() {
   return path.join(dataDir(), 'user', 'settings.json');
 }
 
+/**
+ * Salvage what we can from a settings.json that failed to parse: the file is
+ * copied aside (never silently replaced by defaults on the next save) and the
+ * encrypted API-key blob is pulled out by regex so the user's keys survive
+ * even when the surrounding JSON is damaged.
+ */
+function quarantineCorruptSettings(text, err) {
+  const file = settingsPath();
+  const backup = `${file}.corrupt-${Date.now()}`;
+  try {
+    fs.copyFileSync(file, backup);
+  } catch {}
+  console.warn(`[storage] settings.json is corrupt (${err?.message ?? err}); copied to ${backup}`);
+  const m = /"apiKeysEncrypted"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(text);
+  if (!m) return null;
+  try {
+    return JSON.parse(`"${m[1]}"`);
+  } catch {
+    return m[1];
+  }
+}
+
 export function loadSettings() {
   // Deep-clone defaults so callers can never mutate the shared DEFAULT_SETTINGS
   // objects through nested fields (apiKeys, models, pinnedCharacters, …)
   const base = structuredClone(DEFAULT_SETTINGS);
+  let text;
   try {
-    const raw = JSON.parse(fs.readFileSync(settingsPath(), 'utf8'));
+    text = fs.readFileSync(settingsPath(), 'utf8');
+  } catch {
+    return base; // no settings file yet
+  }
+  let raw;
+  try {
+    raw = JSON.parse(text);
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('not an object');
+  } catch (err) {
+    const blob = quarantineCorruptSettings(text, err);
+    if (blob) {
+      // Mark the blob as undecrypted so saveSettings refuses to overwrite it
+      base.apiKeysEncrypted = blob;
+      base.apiKeysDecryptFailed = true;
+    }
+    return base;
+  }
+  try {
     const settings = {
       ...base,
       ...raw,
@@ -202,33 +259,53 @@ export function loadSettings() {
     }
     // API keys encrypted at rest via the OS keychain. Keep the opaque blob if
     // decryption is unavailable so a later save doesn't wipe the keys.
-    if (settings.apiKeysEncrypted && SECRETS.decryptString) {
-      try {
-        settings.apiKeys = {
-          ...settings.apiKeys,
-          ...JSON.parse(SECRETS.decryptString(settings.apiKeysEncrypted)),
-        };
+    delete settings.apiKeysDecryptFailed;
+    if (settings.apiKeysEncrypted) {
+      let decrypted = null;
+      if (SECRETS.decryptString) {
+        try {
+          decrypted = JSON.parse(SECRETS.decryptString(settings.apiKeysEncrypted));
+        } catch (err) {
+          console.warn(`[storage] could not decrypt stored API keys: ${err?.message ?? err}`);
+        }
+      }
+      if (decrypted && typeof decrypted === 'object') {
+        settings.apiKeys = { ...settings.apiKeys, ...decrypted };
         delete settings.apiKeysEncrypted;
-      } catch {}
+      } else {
+        // Blob kept verbatim; saveSettings must not re-encrypt over it
+        settings.apiKeysDecryptFailed = true;
+      }
     }
     return settings;
-  } catch {
+  } catch (err) {
+    console.warn(`[storage] settings.json could not be applied: ${err?.message ?? err}`);
     return base;
   }
 }
 
 export function saveSettings(settings) {
-  let out = settings;
+  const { apiKeys, apiKeysEncrypted, apiKeysDecryptFailed, ...rest } = settings;
+  let out = { ...rest, apiKeys };
   if (SECRETS.encryptString) {
-    const { apiKeys, apiKeysEncrypted, ...rest } = settings;
-    // A surviving apiKeysEncrypted blob means loadSettings could not decrypt it
-    // (keychain locked/denied). With no decrypted keys in hand, re-encrypting
-    // would replace the user's stored keys with an empty map — keep the blob.
-    const blob =
-      apiKeysEncrypted && !Object.keys(apiKeys ?? {}).length
-        ? apiKeysEncrypted
-        : SECRETS.encryptString(JSON.stringify(apiKeys ?? {}));
-    out = { ...rest, apiKeysEncrypted: blob };
+    if (apiKeysEncrypted && (apiKeysDecryptFailed || !Object.keys(apiKeys ?? {}).length)) {
+      // loadSettings could not decrypt the blob (keychain locked/denied, or
+      // the file was corrupt). Re-encrypting whatever keys are in memory would
+      // replace every key the blob still holds — keep it verbatim, and log
+      // any keys entered this session so the user knows they were not stored.
+      if (Object.keys(apiKeys ?? {}).length) {
+        console.warn(
+          `[storage] refusing to overwrite the undecryptable API-key blob; keys for ${Object.keys(apiKeys).join(', ')} were not saved`
+        );
+      }
+      out = { ...rest, apiKeysEncrypted };
+    } else {
+      out = { ...rest, apiKeysEncrypted: SECRETS.encryptString(JSON.stringify(apiKeys ?? {})) };
+    }
+  } else if (apiKeysEncrypted) {
+    // Plaintext mode with a leftover blob: keep it so a future keychain-enabled
+    // run can still recover those keys.
+    out.apiKeysEncrypted = apiKeysEncrypted;
   }
   writeFileAtomic(settingsPath(), JSON.stringify(out, null, 2));
   return true;
@@ -272,12 +349,13 @@ export function listCharacters() {
   for (const key of cardCache.keys()) {
     if (!seen.has(key)) cardCache.delete(key);
   }
-  out.sort((a, b) => a.card.data.name.localeCompare(b.card.data.name));
+  // One card with a missing/non-string name must not blank the whole list
+  out.sort((a, b) => String(a.card.data.name ?? '').localeCompare(String(b.card.data.name ?? '')));
   return out;
 }
 
 /** Import a character from a PNG (embedded card) or JSON file. Returns { filename, card }. */
-export function importCharacter(filePath) {
+export async function importCharacter(filePath) {
   const buf = fs.readFileSync(filePath);
   let card;
   let avatar;
@@ -295,7 +373,7 @@ export function importCharacter(filePath) {
  * Save (create or update) a character.
  * opts.filename — existing file to overwrite; opts.avatarBuffer / opts.avatarPath — new avatar image.
  */
-export function saveCharacter(card, opts = {}) {
+export async function saveCharacter(card, opts = {}) {
   card = normalizeCard(card);
   let avatar = null;
   if (opts.avatarBuffer) avatar = Buffer.from(opts.avatarBuffer);
@@ -306,11 +384,11 @@ export function saveCharacter(card, opts = {}) {
     const base = sanitizeFilename(card.data.name);
     filename = `${base}.png`;
     let i = 2;
-    while (fs.existsSync(path.join(charactersDir(), filename))) {
+    while (fs.existsSync(safeChild(charactersDir(), filename))) {
       filename = `${base} ${i++}.png`;
     }
   }
-  const full = path.join(charactersDir(), filename);
+  const full = safeChild(charactersDir(), filename);
   // Chats are keyed by character name; detect renames so history follows
   let previousName = null;
   if (opts.filename && fs.existsSync(full)) {
@@ -324,6 +402,9 @@ export function saveCharacter(card, opts = {}) {
   if (!isPNG(avatar)) throw new Error(t('errors.avatarMustBePNG'));
   writeFileAtomic(full, embedCharacterCard(avatar, card));
   if (previousName && previousName !== card.data.name) {
+    // The rename moves the chat dir — a queued append/rewrite still targeting
+    // the old path would otherwise land in a folder that no longer exists.
+    await drainChatQueue();
     migrateChats(previousName, card.data.name);
   }
   return { filename, card };
@@ -367,7 +448,7 @@ function migrateChats(oldName, newName) {
 
 export async function deleteCharacter(filename) {
   await drainChatQueue(); // archiving moves the chat dir — flush queued writes first
-  const full = path.join(charactersDir(), sanitizeFilename(filename));
+  const full = safeChild(charactersDir(), sanitizeFilename(filename));
   // Chats are keyed by character name — read it before the card goes away
   let name = null;
   try {
@@ -399,16 +480,16 @@ function archiveChats(characterName) {
   let dest = path.join(archiveRoot, base);
   let i = 2;
   while (fs.existsSync(dest)) dest = path.join(archiveRoot, `${base} ${i++}`);
-  fs.renameSync(dir, dest);
+  fs.renameSync(dir, safeChild(archiveRoot, path.basename(dest)));
 }
 
 export function exportCharacter(filename, destPath) {
-  fs.copyFileSync(path.join(charactersDir(), sanitizeFilename(filename)), destPath);
+  fs.copyFileSync(safeChild(charactersDir(), sanitizeFilename(filename)), destPath);
   return true;
 }
 
 export function exportCharacterJSON(filename, destPath) {
-  const buf = fs.readFileSync(path.join(charactersDir(), sanitizeFilename(filename)));
+  const buf = fs.readFileSync(safeChild(charactersDir(), sanitizeFilename(filename)));
   const card = parseCharacterCard(buf);
   fs.writeFileSync(destPath, JSON.stringify(card, null, 2));
   return true;
@@ -418,7 +499,7 @@ export function exportCharacterJSON(filename, destPath) {
 // Chats (JSONL: first line metadata, then one message per line)
 
 function chatsDirFor(characterName) {
-  return path.join(dataDir(), 'chats', sanitizeFilename(characterName));
+  return safeChild(path.join(dataDir(), 'chats'), sanitizeFilename(characterName));
 }
 
 function chatTimestamp(d = new Date()) {
@@ -482,10 +563,16 @@ function getChatWorker() {
       if (!chatWorkerJobs.size) chatWorker?.unref();
       error != null ? job.reject(new Error(error)) : job.resolve(result);
     });
-    chatWorker.on('error', (err) => {
+    const failAll = (err) => {
       for (const job of chatWorkerJobs.values()) job.reject(err);
       chatWorkerJobs.clear();
       chatWorker = null; // next call restarts it
+    };
+    chatWorker.on('error', failAll);
+    // A worker that dies without an 'error' (OOM kill, terminate()) would
+    // otherwise leave every pending promise hanging forever.
+    chatWorker.on('exit', (code) => {
+      failAll(new Error(`Chat worker exited (code ${code})`));
     });
   }
   return chatWorker;
@@ -570,7 +657,7 @@ export function createChat(characterName, userName) {
 }
 
 export async function loadChat(characterName, file) {
-  const full = path.join(chatsDirFor(characterName), sanitizeFilename(file));
+  const full = safeChild(chatsDirFor(characterName), sanitizeFilename(file));
   const { metadata, messages } = await chatWorkerCall('load', { path: full });
   return { file, metadata, messages };
 }
@@ -585,7 +672,7 @@ function updateChatListCache(characterName, file, st, apply) {
 }
 
 export async function appendMessage(characterName, file, message) {
-  const full = path.join(chatsDirFor(characterName), sanitizeFilename(file));
+  const full = safeChild(chatsDirFor(characterName), sanitizeFilename(file));
   const st = await chatWorkerCall('append', { path: full, message });
   // Update the list cache in place: the sidebar refreshes after every send,
   // and re-reading a multi-MB file just to bump the count and preview is the
@@ -599,7 +686,7 @@ export async function appendMessage(characterName, file, message) {
 
 /** Rewrite the whole chat file (used after edits, swipes, deletions). */
 export async function rewriteChat(characterName, file, metadata, messages) {
-  const full = path.join(chatsDirFor(characterName), sanitizeFilename(file));
+  const full = safeChild(chatsDirFor(characterName), sanitizeFilename(file));
   const st = await chatWorkerCall('rewrite', { path: full, metadata, messages });
   updateChatListCache(characterName, file, st, (entry) => {
     entry.metadata = metadata;
@@ -611,7 +698,7 @@ export async function rewriteChat(characterName, file, metadata, messages) {
 
 export async function deleteChat(characterName, file) {
   await drainChatQueue(); // a queued rewrite must not resurrect the file
-  await removeFile(path.join(chatsDirFor(characterName), sanitizeFilename(file)));
+  await removeFile(safeChild(chatsDirFor(characterName), sanitizeFilename(file)));
   chatListCache.delete(`${characterName}/${file}`);
   return true;
 }
@@ -705,7 +792,7 @@ export async function exportChatMarkdown(characterName, file, destPath) {
 
 export async function exportChatJSONL(characterName, file, destPath) {
   await drainChatQueue(); // the copy must include any write still in flight
-  fs.copyFileSync(path.join(chatsDirFor(characterName), sanitizeFilename(file)), destPath);
+  fs.copyFileSync(safeChild(chatsDirFor(characterName), sanitizeFilename(file)), destPath);
   return true;
 }
 
@@ -825,12 +912,12 @@ export function listWorldInfo() {
 
 export function saveWorldInfo(book) {
   const file = book.file ? sanitizeFilename(book.file) : `${sanitizeFilename(book.name)}.json`;
-  writeFileAtomic(path.join(worldsDir(), file), JSON.stringify({ ...book, file }, null, 2));
+  writeFileAtomic(safeChild(worldsDir(), file), JSON.stringify({ ...book, file }, null, 2));
   return { ...book, file };
 }
 
 export async function deleteWorldInfo(file) {
-  await removeFile(path.join(worldsDir(), sanitizeFilename(file)));
+  await removeFile(safeChild(worldsDir(), sanitizeFilename(file)));
   return true;
 }
 
@@ -839,7 +926,7 @@ export function exportWorldInfo(file, destPath) {
   // Read just the requested book — listWorldInfo() would parse every book
   let book = null;
   try {
-    const raw = JSON.parse(fs.readFileSync(path.join(worldsDir(), sanitizeFilename(file)), 'utf8'));
+    const raw = JSON.parse(fs.readFileSync(safeChild(worldsDir(), sanitizeFilename(file)), 'utf8'));
     let entries = raw.entries ?? [];
     if (!Array.isArray(entries)) entries = Object.values(entries);
     book = { name: raw.name ?? path.basename(file, '.json'), entries: entries.map(normalizeWorldEntry) };
@@ -900,7 +987,7 @@ export function savePersonas(personas) {
 export function savePersonaAvatar(personaId, sourcePath) {
   const ext = path.extname(sourcePath) || '.png';
   const filename = `${sanitizeFilename(personaId)}${ext}`;
-  fs.copyFileSync(sourcePath, path.join(dataDir(), 'User Avatars', filename));
+  fs.copyFileSync(sourcePath, safeChild(path.join(dataDir(), 'User Avatars'), filename));
   return filename;
 }
 
@@ -934,7 +1021,7 @@ function storeUpload(name, buffer) {
   const ext = (path.extname(name).slice(1) || 'bin').toLowerCase();
   const base = sanitizeFilename(path.basename(name, path.extname(name))).slice(0, 60) || 'file';
   const file = `${base}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
-  writeFileAtomic(path.join(uploadsDir(), file), buffer);
+  writeFileAtomic(safeChild(uploadsDir(), file), buffer);
   return {
     file,
     name: path.basename(name),
@@ -961,13 +1048,13 @@ export function saveUploadData(name, dataURL) {
 
 /** Copy an upload (e.g. a generated image) out of the data dir. */
 export function exportUpload(file, destPath) {
-  fs.copyFileSync(path.join(uploadsDir(), sanitizeFilename(file)), destPath);
+  fs.copyFileSync(safeChild(uploadsDir(), sanitizeFilename(file)), destPath);
   return true;
 }
 
 /** Read an upload back for prompt building: images → dataURL, text → text. */
 export function readUploadData(file) {
-  const full = path.join(uploadsDir(), sanitizeFilename(file));
+  const full = safeChild(uploadsDir(), sanitizeFilename(file));
   const ext = (path.extname(file).slice(1) || 'bin').toLowerCase();
   const kind = uploadKind(ext);
   const buffer = fs.readFileSync(full);
@@ -1005,14 +1092,14 @@ export function listPresets() {
 export function savePreset(preset) {
   if (preset.name === 'Default') throw new Error(t('errors.defaultPresetReadonly'));
   writeFileAtomic(
-    path.join(presetsDir(), `${sanitizeFilename(preset.name)}.json`),
+    safeChild(presetsDir(), `${sanitizeFilename(preset.name)}.json`),
     JSON.stringify(preset, null, 2)
   );
   return true;
 }
 
 export function deletePreset(name) {
-  const full = path.join(presetsDir(), `${sanitizeFilename(name)}.json`);
+  const full = safeChild(presetsDir(), `${sanitizeFilename(name)}.json`);
   if (fs.existsSync(full)) fs.unlinkSync(full);
   return true;
 }

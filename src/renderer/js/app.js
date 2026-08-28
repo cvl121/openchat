@@ -91,6 +91,7 @@ function applyAppearance() {
   root.style.setProperty('--app-font-size', `${s.appFontSize ?? 13}px`);
   root.style.setProperty('--app-font', APP_FONTS[s.appFontFamily] ?? APP_FONTS.system);
   document.body.style.zoom = s.uiScale ?? 1.0;
+  document.body.classList.toggle('text-buttons', !!s.textButtons);
 }
 
 async function reloadCharacters() {
@@ -265,7 +266,10 @@ function bindShortcuts() {
     } else if (key === 'z' && !e.shiftKey && state.view === 'chat') {
       const target = e.target;
       const editingText = target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement;
-      if (!editingText) {
+      // An empty #chat-input has no native undo history worth keeping, so
+      // the shortcut falls through to chat undo; with text, native undo wins.
+      const emptyChatInput = target instanceof HTMLTextAreaElement && target.id === 'chat-input' && !target.value;
+      if (!editingText || emptyChatInput) {
         e.preventDefault();
         chatUndo();
       }
@@ -372,7 +376,7 @@ async function showUpdateBanner({ version, url }) {
         banner.remove();
       },
     }, t('updates.skipVersion')),
-    el('button', { class: 'update-banner-close', title: t('common.dismiss'), onclick: () => banner.remove() }, '×')
+    el('button', { class: 'update-banner-close', title: t('common.dismiss'), 'aria-label': t('common.dismiss'), onclick: () => banner.remove() }, '×')
   );
   document.body.append(banner);
 }

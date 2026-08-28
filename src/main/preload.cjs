@@ -72,7 +72,7 @@ contextBridge.exposeInMainWorld('tavern', {
     importUpload: (sourcePath) => invoke('files:importUpload', sourcePath),
     saveUpload: (name, dataURL) => invoke('files:saveUpload', name, dataURL),
     readUpload: (file) => invoke('files:readUpload', file),
-    exportUpload: (file, destPath) => invoke('files:exportUpload', file, destPath),
+    exportUpload: (file) => invoke('files:exportUpload', file),
   },
   misc: {
     // Mint the resolved path so main-process import handlers will accept it.

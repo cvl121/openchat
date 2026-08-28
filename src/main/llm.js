@@ -326,15 +326,18 @@ function buildRequest(messages, config, stream) {
       const body = {
         model: config.model,
         max_tokens: p.max_tokens,
-        temperature: Math.min(p.temperature, 1.0),
         messages: turns,
         stream,
       };
+      // Anthropic rejects requests that set both temperature and top_p —
+      // a preset that lowers top_p is asking for nucleus sampling, so send
+      // only that; otherwise send temperature alone.
+      if (p.top_p != null && p.top_p < 1.0) body.top_p = p.top_p;
+      else body.temperature = Math.min(p.temperature, 1.0);
       // Cache the stable prefix: below the model's minimum cacheable length
       // the marker is a no-op, above it every following turn reads the card,
       // persona, and constant lore at the cached-token rate.
       if (system) body.system = [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }];
-      if (p.top_p < 1.0) body.top_p = p.top_p;
       if (p.top_k > 0) body.top_k = p.top_k;
       if (p.stop_sequences?.length) body.stop_sequences = p.stop_sequences;
       return {
@@ -591,34 +594,49 @@ function extractImages(provider, json) {
 // ---------------------------------------------------------------------------
 // SSE parsing
 
-/** Async-iterate "data: ..." payloads from a fetch response body. */
+/**
+ * Async-iterate "data: ..." payloads from a fetch response body. Per the SSE
+ * spec an event's data may span several `data:` lines, joined with '\n' and
+ * dispatched at the blank line — parsing each line on its own would split a
+ * multi-line JSON payload into unparseable fragments.
+ */
 async function* sseEvents(response) {
   const decoder = new TextDecoder();
   let buffer = '';
+  let dataLines = [];
+  // Returns the event payload to yield, '[DONE]' sentinel, or null (nothing)
+  const flush = () => {
+    if (!dataLines.length) return null;
+    const data = dataLines.join('\n').trim();
+    dataLines = [];
+    return data || null;
+  };
+  const handleLine = (raw) => {
+    const line = raw.replace(/\r$/, '');
+    if (line === '') return flush(); // blank line = end of event
+    if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
+    return null;
+  };
   for await (const chunk of response.body) {
     buffer += decoder.decode(chunk, { stream: true });
     let nl;
     while ((nl = buffer.indexOf('\n')) !== -1) {
-      const line = buffer.slice(0, nl).replace(/\r$/, '');
+      const data = handleLine(buffer.slice(0, nl));
       buffer = buffer.slice(nl + 1);
-      if (line.startsWith('data:')) {
-        const data = line.slice(5).trim();
-        if (data === '[DONE]') return;
-        if (data) yield data;
-      }
-    }
-  }
-  // A final event without a trailing newline would otherwise be dropped,
-  // silently truncating the response by one chunk.
-  buffer += decoder.decode();
-  for (const raw of buffer.split('\n')) {
-    const line = raw.replace(/\r$/, '');
-    if (line.startsWith('data:')) {
-      const data = line.slice(5).trim();
       if (data === '[DONE]') return;
       if (data) yield data;
     }
   }
+  // A final event without a trailing blank line would otherwise be dropped,
+  // silently truncating the response by one chunk.
+  buffer += decoder.decode();
+  for (const raw of buffer.split('\n')) {
+    const data = handleLine(raw);
+    if (data === '[DONE]') return;
+    if (data) yield data;
+  }
+  const last = flush();
+  if (last && last !== '[DONE]') yield last;
 }
 
 async function readErrorBody(response) {
@@ -639,12 +657,17 @@ async function readErrorBody(response) {
 // Public API
 
 const MAX_SEND_RETRIES = 2;
+// Streaming: abort when no bytes arrive for this long (a stalled socket).
 const STREAM_IDLE_TIMEOUT_MS = 120_000;
+// Non-streaming: the whole reply arrives at once, so a long generation looks
+// exactly like a stall — bound the request end-to-end far more generously.
+const COMPLETE_TIMEOUT_MS = 10 * 60_000;
 
 /** Transient failures worth retrying: rate limits, server errors, network drops. */
 function isRetryable(err) {
   if (err?.name === 'AbortError') return false;
   if (err instanceof LLMError) return err.status === 429 || err.status >= 500;
+  if (err instanceof SyntaxError) return false; // malformed body — retrying won't fix it
   return true; // fetch-level network failure
 }
 
@@ -710,8 +733,10 @@ export async function sendMessage(messages, config, onChunk, { signal, onImage, 
 }
 
 async function attemptSend(req, config, stream, { onChunk, onImage, onFinishReason, onUsage, onReasoning }, signal) {
-  // A stalled connection would otherwise hang until manual stop: abort if no
-  // bytes arrive for STREAM_IDLE_TIMEOUT_MS.
+  // A stalled connection would otherwise hang until manual stop. Streaming:
+  // abort if no bytes arrive for STREAM_IDLE_TIMEOUT_MS (reset on headers
+  // and on every event). Non-streaming: one overall COMPLETE_TIMEOUT_MS
+  // budget, since nothing arrives until the model has finished.
   const idle = new AbortController();
   let idleTimer = null;
   let idledOut = false;
@@ -720,7 +745,7 @@ async function attemptSend(req, config, stream, { onChunk, onImage, onFinishReas
     idleTimer = setTimeout(() => {
       idledOut = true;
       idle.abort();
-    }, STREAM_IDLE_TIMEOUT_MS);
+    }, stream ? STREAM_IDLE_TIMEOUT_MS : COMPLETE_TIMEOUT_MS);
   };
   resetIdle();
   try {
@@ -730,6 +755,7 @@ async function attemptSend(req, config, stream, { onChunk, onImage, onFinishReas
       body: JSON.stringify(req.body),
       signal: signal ? AbortSignal.any([signal, idle.signal]) : idle.signal,
     });
+    if (stream) resetIdle(); // headers arrived — the idle clock starts over
     if (!response.ok) {
       const body = await readErrorBody(response);
       const retryAfter = Number(response.headers.get('retry-after'));
@@ -744,7 +770,22 @@ async function attemptSend(req, config, stream, { onChunk, onImage, onFinishReas
     }
 
     if (!stream) {
-      const json = await response.json();
+      let json;
+      try {
+        json = await response.json();
+      } catch (err) {
+        if (err?.name === 'AbortError' || idledOut) throw err;
+        // A 200 with an unparseable body is a provider bug, not a transient
+        // failure — surface it once instead of retrying the whole request.
+        throw new LLMError(
+          t('errors.providerError', {
+            label: PROVIDERS[config.provider]?.label ?? config.provider,
+            status: response.status,
+            body: `malformed JSON response: ${err?.message ?? err}`,
+          }),
+          { status: response.status, body: '' }
+        );
+      }
       const think = extractReasoningComplete(config.provider, json);
       if (think) onReasoning?.(think);
       const text = extractComplete(config.provider, json);

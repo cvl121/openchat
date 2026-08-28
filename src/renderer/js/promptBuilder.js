@@ -112,8 +112,9 @@ export function buildMessages({
   if (scenario) systemContent += `\nScenario: ${scenario}`;
 
   // 5. Persona description
-  if (persona?.description) {
-    systemContent += `\n\n${userName}'s description: ${persona.description}`;
+  const personaDescription = vars(persona?.description);
+  if (personaDescription) {
+    systemContent += `\n\n${userName}'s description: ${personaDescription}`;
   }
 
   // Keyword scans read the recent messages plus the compression summary —
@@ -155,14 +156,15 @@ export function buildMessages({
     }
   }
 
-  // 7–8. World info: same split — constant entries here, triggered ones collected
+  // 7–8. World info: same split — constant entries here, triggered ones
+  // collected. Each entry carries its book's scan_depth (applicableWorldEntries).
   const enabled = worldInfoEntries.filter((e) => e.enabled !== false);
   const byOrder = (a, b) => (a.insertion_order ?? 100) - (b.insertion_order ?? 100);
   for (const entry of enabled.filter((e) => e.constant).sort(byOrder)) {
     systemContent += `\n\n${vars(entry.content)}`;
   }
   for (const entry of enabled
-    .filter((e) => !e.constant && keywordMatches(e, scanText(scanDepthFor(e, 10))))
+    .filter((e) => !e.constant && keywordMatches(e, scanText(scanDepthFor(e, e.scan_depth ?? 10))))
     .sort(byOrder)) {
     triggeredLore.push(vars(entry.content));
   }
@@ -312,12 +314,19 @@ export function parseExampleMessages(example, charName, userName) {
   return messages;
 }
 
-/** Collect world info entries that apply to a character (global books + assigned books). */
+/**
+ * Collect world info entries that apply to a character (global books +
+ * assigned books). A book-level scan_depth is stamped onto each of its
+ * entries so buildMessages can honor it per entry (default 10).
+ */
 export function applicableWorldEntries(worldBooks, characterFilename) {
   const entries = [];
   for (const book of worldBooks) {
     if (book.global || (book.assignedCharacters ?? []).includes(characterFilename)) {
-      entries.push(...(book.entries ?? []));
+      const depth = book.scan_depth;
+      for (const entry of book.entries ?? []) {
+        entries.push(depth != null && entry.scan_depth == null ? { ...entry, scan_depth: depth } : entry);
+      }
     }
   }
   return entries;

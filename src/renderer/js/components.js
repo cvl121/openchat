@@ -82,6 +82,19 @@ export function sliderRow(label, { min, max, step, get, set, hint, softMax = fal
   );
 }
 
+/**
+ * Icon button that honors the "text labels" setting: renders the glyph
+ * normally, or the short `label` (falling back to the title) as text when
+ * body.text-buttons is set. `label` is stripped from the DOM attributes.
+ */
+export function iconBtn({ label, ...attrs }, glyph) {
+  const text = document.body.classList.contains('text-buttons');
+  const cls = attrs.class ?? 'btn-icon';
+  if (!text) return el('button', attrs, glyph);
+  const caption = label ?? (attrs.title ?? '').replace(/\s*\(.*\)$/, '');
+  return el('button', { ...attrs, class: `${cls} btn-text` }, caption || glyph);
+}
+
 export function checkboxRow(label, { get, set, hint }) {
   const box = el('input', { type: 'checkbox' });
   box.checked = get();
@@ -106,9 +119,18 @@ export function textRow(label, { get, set, placeholder = '', hint }) {
   );
 }
 
-export function textareaRow(label, { get, set, placeholder = '', rows = 4, hint }) {
+export function textareaRow(label, { get, set, placeholder = '', rows = 4, hint, autoGrow = false }) {
   const input = el('textarea', { rows, placeholder }, get() ?? '');
   input.addEventListener('input', () => set(input.value));
+  if (autoGrow) {
+    // Grow with the content so multi-line text isn't clipped at `rows`
+    const fit = () => {
+      input.style.height = 'auto';
+      input.style.height = `${input.scrollHeight + 2}px`;
+    };
+    input.addEventListener('input', fit);
+    requestAnimationFrame(fit); // scrollHeight is 0 until attached
+  }
   return el(
     'div',
     { class: 'form-row' },

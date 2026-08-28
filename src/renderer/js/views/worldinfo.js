@@ -1,12 +1,15 @@
 // World Lore page: standalone world info books with keyword-triggered entries,
 // assignable globally or to specific characters.
 
-import { el, clear, toast, confirmDialog, modal } from '../util.js';
+import { el, clear, toast, confirmDialog, modal, keyboardClickable } from '../util.js';
 import { state } from '../state.js';
-import { textRow, textareaRow, checkboxRow } from '../components.js';
+import { textRow, textareaRow, checkboxRow, iconBtn } from '../components.js';
 import { t } from '../../../shared/i18n.js';
 
 let cb = {}; // { reloadWorlds }
+
+// t() has no plural rules; keys carry a `_one` variant for the singular.
+const plural = (key, count) => t(count === 1 ? `${key}_one` : key, { count });
 
 export function initWorldInfo(callbacks) {
   cb = callbacks;
@@ -76,10 +79,10 @@ export function renderWorldInfo() {
   }
 
   for (const book of state.worlds) {
-    inner.append(
+    const row = keyboardClickable(
       el(
         'div',
-        { class: 'list-row', onclick: () => openBookEditor(book) },
+        { class: 'list-row', 'aria-label': book.name, onclick: () => openBookEditor(book) },
         el(
           'div',
           { class: 'list-main' },
@@ -87,13 +90,14 @@ export function renderWorldInfo() {
           el(
             'div',
             { class: 'list-sub' },
-            `${t('worlds.nEntries', { count: book.entries.length })} · ${book.global ? t('worlds.global') : book.assignedCharacters?.length ? t('worlds.nCharacters', { count: book.assignedCharacters.length }) : t('worlds.unassigned')}`
+            `${plural('worlds.nEntries', book.entries.length)} · ${book.global ? t('worlds.global') : book.assignedCharacters?.length ? plural('worlds.nCharacters', book.assignedCharacters.length) : t('worlds.unassigned')}`
           )
         ),
-        el('button', {
+        iconBtn({
           class: 'btn-icon',
           title: t('worlds.exportBook'),
           'aria-label': t('worlds.exportBookAria', { name: book.name }),
+          label: t('label.export'),
           onclick: async (e) => {
             e.stopPropagation();
             try {
@@ -103,22 +107,29 @@ export function renderWorldInfo() {
               toast(err.message, 'error');
             }
           },
-        }, '⬇'),
-        el('button', {
+        }, '⬆'),
+        iconBtn({
           class: 'btn-icon',
           title: t('worlds.deleteBook'),
           'aria-label': t('worlds.deleteBookAria', { name: book.name }),
+          label: t('label.delete'),
           onclick: async (e) => {
             e.stopPropagation();
             const ok = await confirmDialog(t('worlds.deleteConfirm', { name: book.name }));
             if (!ok) return;
-            await window.tavern.worlds.delete(book.file);
+            try {
+              await window.tavern.worlds.delete(book.file);
+            } catch (err) {
+              toast(t('common.deleteFailed', { msg: err.message }), 'error');
+              return;
+            }
             await cb.reloadWorlds?.();
             renderWorldInfo();
           },
         }, '🗑')
       )
     );
+    inner.append(row);
   }
 
   main.append(page);
@@ -131,17 +142,14 @@ function openBookEditor(book) {
   const rerender = () => {
     clear(content);
     content.append(el('h2', {}, t('worlds.editBook')));
-    content.append(
-      textRow(t('worlds.bookName'), { get: () => draft.name, set: (v) => (draft.name = v) }),
-      checkboxRow(t('worlds.globalLabel'), {
-        get: () => !!draft.global,
-        set: (v) => (draft.global = v),
-      })
-    );
-
-    if (!draft.global && state.characters.length) {
+    // The assignment list lives in its own host so the Global toggle can
+    // show/hide it without rebuilding the (possibly huge) entry list.
+    const assignHost = el('div', {});
+    const renderAssign = () => {
+      clear(assignHost);
+      if (draft.global || !state.characters.length) return;
       const assigned = new Set(draft.assignedCharacters ?? []);
-      content.append(
+      assignHost.append(
         el('div', { class: 'form-row' },
           el('label', {}, t('worlds.assignedCharacters')),
           el('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px' } },
@@ -158,7 +166,19 @@ function openBookEditor(book) {
           )
         )
       );
-    }
+    };
+    content.append(
+      textRow(t('worlds.bookName'), { get: () => draft.name, set: (v) => (draft.name = v) }),
+      checkboxRow(t('worlds.globalLabel'), {
+        get: () => !!draft.global,
+        set: (v) => {
+          draft.global = v;
+          renderAssign();
+        },
+      }),
+      assignHost
+    );
+    renderAssign();
 
     // Adds and deletes touch only their own card — an imported SillyTavern
     // book can hold a thousand entries, and a full rebuild per click would
@@ -273,11 +293,12 @@ export function loreEntryCard(entry, onDelete) {
         style: { fontSize: '12px' },
         title: t('worlds.stickyTitle'),
       }, t('worlds.sticky'), stickyInput),
-      el('button', {
+      iconBtn({
         class: 'btn-icon',
         style: { marginLeft: 'auto' },
         title: t('worlds.deleteEntry'),
         'aria-label': t('worlds.deleteEntry'),
+          label: t('label.delete'),
         onclick: onDelete,
       }, '🗑')
     )

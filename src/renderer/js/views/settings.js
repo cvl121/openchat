@@ -6,7 +6,7 @@
 // full sampler customization, presets, prompt overrides, base URLs, and the
 // developer log.
 
-import { el, clear, toast, confirmDialog, modal, estimateTokens, formatModelPricing } from '../util.js';
+import { el, clear, toast, confirmDialog, modal, estimateTokens, formatModelPricing, debounce } from '../util.js';
 import {
   state,
   PROVIDERS,
@@ -22,7 +22,7 @@ import {
   knownModelContext,
   rememberModelPricing,
 } from '../state.js';
-import { sliderRow, checkboxRow, textRow, textareaRow, selectRow, combobox } from '../components.js';
+import { sliderRow, checkboxRow, textRow, textareaRow, selectRow, combobox, iconBtn } from '../components.js';
 import { t, LOCALES, LOCALE_LABELS } from '../../../shared/i18n.js';
 
 let cb = {}; // { applyAppearance, reloadAll, renderSidebar }
@@ -136,6 +136,7 @@ function renderAPI() {
   );
 
   const provider = PROVIDERS[s.activeAPI];
+  let keySettled = () => {}; // assigned once the model picker exists below
 
   {
     const keyInput = el('input', {
@@ -146,9 +147,10 @@ function renderAPI() {
     keyInput.addEventListener('input', () => {
       s.apiKeys[s.activeAPI] = keyInput.value.trim();
       scheduleSettingsSave();
+      // Once typing settles, refresh the model list in place — a full
+      // re-render on `change` swallowed the next click (Show / Test connection)
+      keySettled();
     });
-    // Once the key is entered, re-render so the model list loads with it
-    keyInput.addEventListener('change', () => renderSettings());
     const toggle = el('button', { class: 'btn' }, t('common.show'));
     toggle.addEventListener('click', () => {
       const hidden = keyInput.type === 'password';
@@ -218,12 +220,19 @@ function renderAPI() {
     refreshBtn.disabled = false;
     refreshBtn.textContent = t('settings.refreshList');
   });
-  if (s.apiKeys[s.activeAPI]) {
-    modelHint.textContent = t('settings.loadingModels');
-    loadMainModels(false);
-  } else {
-    modelHint.textContent = t('settings.enterKeyForModels');
-  }
+  const syncModelsToKey = () => {
+    if (s.apiKeys[s.activeAPI]) {
+      modelHint.textContent = t('settings.loadingModels');
+      modelHint.style.color = '';
+      loadMainModels(false);
+    } else {
+      modelHint.textContent = t('settings.enterKeyForModels');
+      modelHint.style.color = '';
+      modelCombo.setItems([]);
+    }
+  };
+  syncModelsToKey();
+  keySettled = debounce(syncModelsToKey, 600);
   root.append(
     el('div', { class: 'form-row' },
       el('label', {}, t('settings.model')),
@@ -543,6 +552,17 @@ function renderGeneral() {
         scheduleSettingsSave();
         cb.applyAppearance?.();
       },
+    }),
+    checkboxRow(t('settings.textButtons'), {
+      get: () => !!s.textButtons,
+      set: (v) => {
+        s.textButtons = v;
+        scheduleSettingsSave();
+        cb.applyAppearance?.();
+        cb.renderSidebar?.();
+        renderSettings();
+      },
+      hint: t('settings.textButtonsHint'),
     }),
     checkboxRow(t('settings.sendOnEnter'), {
       get: () => s.sendOnEnter,
@@ -870,9 +890,11 @@ function renderPresets() {
             toast(t('settings.presetLoaded', { name: preset.name }), 'ok');
           },
         }, t('settings.load')),
-        el('button', {
+        iconBtn({
           class: 'btn-icon',
           title: t('common.export'),
+          'aria-label': t('settings.exportPresetAria', { name: preset.name }),
+          label: t('label.export'),
           onclick: async () => {
             try {
               const saved = await window.tavern.presets.export(preset.name);
@@ -883,9 +905,11 @@ function renderPresets() {
           },
         }, '⬆'),
         preset.name !== 'Default'
-          ? el('button', {
+          ? iconBtn({
               class: 'btn-icon',
               title: t('common.delete'),
+              'aria-label': t('settings.deletePresetAria', { name: preset.name }),
+          label: t('label.delete'),
               onclick: async () => {
                 const ok = await confirmDialog(t('settings.deletePresetConfirm', { name: preset.name }));
                 if (!ok) return;

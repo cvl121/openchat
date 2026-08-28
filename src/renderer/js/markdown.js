@@ -237,6 +237,14 @@ export function renderMarkdown(raw) {
     codeLang = '';
   };
 
+  // Consecutive "> " lines merge into a single blockquote
+  let quoteLines = [];
+  const flushQuote = () => {
+    if (!quoteLines.length) return;
+    html.push(`<blockquote>${quoteLines.map(renderInline).join('<br>')}</blockquote>`);
+    quoteLines = [];
+  };
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (line.trim().startsWith('```')) {
@@ -246,6 +254,7 @@ export function renderMarkdown(raw) {
       } else {
         flushParagraph();
         flushList();
+        flushQuote();
         codeLang = line.trim().slice(3).trim();
         inCode = true;
       }
@@ -258,6 +267,7 @@ export function renderMarkdown(raw) {
 
     const trimmed = line.trim();
     const next = (lines[i + 1] ?? '').trim();
+    if (!trimmed.startsWith('&gt;')) flushQuote();
 
     if (!trimmed) {
       flushParagraph();
@@ -298,7 +308,7 @@ export function renderMarkdown(raw) {
     } else if (trimmed.startsWith('&gt;')) {
       flushParagraph();
       flushList();
-      html.push(`<blockquote>${renderInline(trimmed.replace(/^&gt;\s?/, ''))}</blockquote>`);
+      quoteLines.push(trimmed.replace(/^&gt;\s?/, ''));
     } else if (bullet || ordered) {
       flushParagraph();
       const [, spaces, content] = bullet ?? ordered;
@@ -324,6 +334,7 @@ export function renderMarkdown(raw) {
   if (inCode && codeLines.length) emitCodeBlock();
   flushParagraph();
   flushList();
+  flushQuote();
   return html.join('\n');
 }
 

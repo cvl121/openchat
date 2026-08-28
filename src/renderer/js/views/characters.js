@@ -1,6 +1,6 @@
 // Character library page: grid of all characters with import/create actions.
 
-import { el, clear, toast } from '../util.js';
+import { el, clear, toast, keyboardClickable } from '../util.js';
 import { state, avatarURL, filterCharacters } from '../state.js';
 import { avatar } from '../components.js';
 import { t } from '../../../shared/i18n.js';
@@ -55,7 +55,7 @@ function renderGrid(grid, query) {
     const data = character.card.data;
     const card = el(
       'div',
-      { class: 'char-card', onclick: () => cb.selectCharacter?.(character) },
+      { class: 'char-card', 'aria-label': data.name, onclick: () => cb.selectCharacter?.(character) },
       avatar(avatarURL(character), data.name, 72),
       el('div', { class: 'char-name' }, data.name),
       el('div', { class: 'char-tags' }, (data.tags ?? []).slice(0, 3).join(' · ')),
@@ -94,6 +94,7 @@ function renderGrid(grid, query) {
         )
       )
     );
+    keyboardClickable(card);
     grid.append(card);
   }
 }

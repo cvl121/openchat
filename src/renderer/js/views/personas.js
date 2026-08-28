@@ -48,12 +48,13 @@ export function renderPersonas() {
   for (const persona of state.personas) {
     const isActive = persona.id === activeId;
     const card = el('div', { class: 'card' });
+    const nameLabel = el('strong', { style: { flex: 1 } }, persona.name);
 
     const header = el(
       'div',
       { style: { display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' } },
       avatar(personaAvatarURL(persona), persona.name, 44),
-      el('strong', { style: { flex: 1 } }, persona.name),
+      nameLabel,
       isActive
         ? el('span', { class: 'mode-badge' }, t('personas.active'))
         : el(
@@ -77,6 +78,9 @@ export function renderPersonas() {
         get: () => persona.name,
         set: (v) => {
           persona.name = v;
+          // Keep the card header and the per-character <select> options live
+          nameLabel.textContent = v;
+          for (const opt of inner.querySelectorAll(`option[value="${persona.id}"]`)) opt.textContent = v;
           saveDebounced();
         },
       }),
@@ -86,7 +90,8 @@ export function renderPersonas() {
           persona.description = v;
           saveDebounced();
         },
-        rows: 3,
+        rows: 4,
+        autoGrow: true,
         placeholder: t('personas.descriptionPlaceholder'),
       }),
       el(

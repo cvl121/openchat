@@ -3,5 +3,9 @@
 
 /** Make a name safe to use as a file or directory name. */
 export function sanitizeFilename(name) {
-  return name.replace(/[/\\:*?"<>|]/g, '_').trim() || 'Unnamed';
+  const cleaned = String(name ?? '').replace(/[/\\:*?"<>|]/g, '_').trim();
+  // "." and ".." are directory references, never a usable name — they would
+  // resolve to the parent folder itself (or above it) in a path.join.
+  if (!cleaned || cleaned === '.' || cleaned === '..') return 'Unnamed';
+  return cleaned;
 }

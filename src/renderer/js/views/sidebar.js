@@ -1,7 +1,7 @@
 // Conversation sidebar: search, pinned + recent characters, bottom navigation.
 // Chat mode swaps the character list for the assistant's conversation list.
 
-import { el, clear, relativeDate, toast, confirmDialog, promptDialog, stripMarkdown } from '../util.js';
+import { el, clear, relativeDate, toast, confirmDialog, promptDialog, stripMarkdown, keyboardClickable, IS_MAC } from '../util.js';
 import { state, avatarURL, scheduleSettingsSave, isChatMode, runFor, isUnread, filterCharacters, ASSISTANT_CHARACTER } from '../state.js';
 import { avatar, streamingDots } from '../components.js';
 import { t } from '../../../shared/i18n.js';
@@ -64,7 +64,6 @@ export function initSidebar(cb) {
 // the panel slides out it docks at the window's top-left (persisted in
 // settings). CSS positions it per platform — macOS docks it beside the
 // traffic lights, other OSes get the free corner.
-const IS_MAC = navigator.platform.includes('Mac');
 const SHORTCUT_HINT = IS_MAC ? '⌘\\' : 'Ctrl+\\';
 
 function renderCollapseControls() {
@@ -122,6 +121,7 @@ export function renderSidebar() {
   }
   renderList();
   renderNav();
+  applySidebarCollapsed(); // toggle label follows the current locale/state
 }
 
 function renderList() {
@@ -275,9 +275,8 @@ function conversationRow(convo, isPinned) {
       unread: isUnread(ASSISTANT_NAME, convo.file),
     })
   );
-  row.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    showMenu(e, [
+  const openMenu = (at) =>
+    showMenu(at, [
       [t(isPinned ? 'sidebar.unpin' : 'sidebar.pin'), () => togglePinConversation(convo.file)],
       [t('common.rename'), async () => {
         const title = await promptDialog(t('sidebar.renameConversation'), { value: conversationTitle(convo), confirmLabel: t('common.rename') });
@@ -290,7 +289,11 @@ function conversationRow(convo, isPinned) {
         if (ok) await callbacks.deleteConversation?.(convo.file);
       }, true],
     ]);
+  row.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    openMenu({ x: e.clientX, y: e.clientY });
   });
+  keyboardClickable(row, { onContextMenu: openMenu });
   return row;
 }
 
@@ -329,15 +332,17 @@ function convRow(character, isPinned) {
     rowIndicator({ processing, unread })
   );
 
+  const openMenu = (at) => showContextMenu(at, character, isPinned);
   row.addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    showContextMenu(e, character, isPinned);
+    openMenu({ x: e.clientX, y: e.clientY });
   });
+  keyboardClickable(row, { onContextMenu: openMenu });
   return row;
 }
 
-function showContextMenu(event, character, isPinned) {
-  showMenu(event, [
+function showContextMenu(at, character, isPinned) {
+  showMenu(at, [
     [t(isPinned ? 'sidebar.unpin' : 'sidebar.pin'), () => togglePin(character)],
     [t('sidebar.editCharacter'), () => callbacks.editCharacter?.(character)],
     [t('sidebar.exportPNG'), () => exportCharacter(character, 'png')],
@@ -346,32 +351,56 @@ function showContextMenu(event, character, isPinned) {
   ]);
 }
 
-function showMenu(event, items) {
+/** Context menu at viewport point {x, y}; clamped on-screen, closes on Escape. */
+function showMenu({ x, y }, items) {
   document.querySelector('.ctx-menu')?.remove();
   const menu = el(
     'div',
-    {
-      class: 'ctx-menu',
-      style: { left: `${event.clientX}px`, top: `${event.clientY}px` },
-    },
+    { class: 'ctx-menu', role: 'menu', style: { left: `${x}px`, top: `${y}px` } },
     items.map(([label, action, danger]) => {
-      const item = el('div', { class: `ctx-menu-item${danger ? ' danger' : ''}` }, label);
+      const item = el('div', { class: `ctx-menu-item${danger ? ' danger' : ''}`, role: 'menuitem', tabindex: '-1' }, label);
       item.addEventListener('click', () => {
-        menu.remove();
+        dismiss();
         action();
       });
       return item;
     })
   );
   document.body.append(menu);
+  // Measure after append and pull the menu back inside the viewport
+  const rect = menu.getBoundingClientRect();
+  const margin = 6;
+  if (rect.right > window.innerWidth - margin) menu.style.left = `${Math.max(margin, window.innerWidth - rect.width - margin)}px`;
+  if (rect.bottom > window.innerHeight - margin) menu.style.top = `${Math.max(margin, window.innerHeight - rect.height - margin)}px`;
+  const prevFocus = document.activeElement;
   const dismiss = () => {
     menu.remove();
     document.removeEventListener('mousedown', onDown, true);
+    document.removeEventListener('keydown', onKey, true);
   };
   const onDown = (e) => {
     if (!menu.contains(e.target)) dismiss();
   };
+  const onKey = (e) => {
+    const rows = [...menu.querySelectorAll('.ctx-menu-item')];
+    const cur = rows.indexOf(document.activeElement);
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      dismiss();
+      if (prevFocus instanceof HTMLElement && document.contains(prevFocus)) prevFocus.focus();
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const delta = e.key === 'ArrowDown' ? 1 : -1;
+      rows[(cur + delta + rows.length) % rows.length]?.focus();
+    } else if ((e.key === 'Enter' || e.key === ' ') && cur >= 0) {
+      e.preventDefault();
+      rows[cur].click();
+    }
+  };
   document.addEventListener('mousedown', onDown, true);
+  document.addEventListener('keydown', onKey, true);
+  menu.querySelector('.ctx-menu-item')?.focus();
 }
 
 async function exportCharacter(character, format) {
@@ -396,8 +425,13 @@ function togglePin(character) {
 async function deleteCharacter(character) {
   const ok = await confirmDialog(t('sidebar.deleteCharacterConfirm', { name: character.card.data.name }));
   if (!ok) return;
-  await window.tavern.characters.delete(character.filename);
-  toast(t('sidebar.characterDeleted'));
+  try {
+    await window.tavern.characters.delete(character.filename);
+    toast(t('sidebar.characterDeleted'));
+  } catch (err) {
+    toast(t('common.deleteFailed', { msg: err.message }), 'error');
+    return;
+  }
   await callbacks.reloadCharacters?.();
 }
 

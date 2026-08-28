@@ -37,6 +37,13 @@ test('bold, headers, code, blockquote, lists, hr', () => {
   assert.match(renderMarkdown('## Title'), /<h2>Title<\/h2>/);
   assert.match(renderMarkdown('`code`'), /<code>code<\/code>/);
   assert.match(renderMarkdown('> quoted'), /<blockquote>quoted<\/blockquote>/);
+  // Consecutive "> " lines merge into a single blockquote
+  const merged = renderMarkdown('> one\n> two\nafter');
+  assert.match(merged, /<blockquote>one<br>two<\/blockquote>/);
+  assert.equal((merged.match(/<blockquote>/g) ?? []).length, 1);
+  assert.match(merged, /<p>after<\/p>|after/);
+  // A blank line ends the quote
+  assert.equal((renderMarkdown('> a\n\n> b').match(/<blockquote>/g) ?? []).length, 2);
   assert.match(renderMarkdown('- item'), /<ul>\n<li>item<\/li>\n<\/ul>/);
   assert.match(renderMarkdown('1. first'), /<ol>\n<li>first<\/li>\n<\/ol>/);
   assert.match(renderMarkdown('---'), /<hr>/);

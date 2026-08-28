@@ -186,12 +186,15 @@ app.whenReady().then(() => {
   });
 
   // URLs look like tavern://data/<path-within-data-dir>
-  protocol.handle('tavern', (request) => {
-    const { pathname } = new URL(request.url);
+  protocol.handle('tavern', async (request) => {
     try {
+      const { pathname } = new URL(request.url);
       const rel = decodeURIComponent(pathname).replace(/^\/+/, '');
       const filePath = resolveDataPath(rel);
-      return net.fetch(url.pathToFileURL(filePath).toString());
+      // Awaited inside the try: a missing file rejects asynchronously, and
+      // returning the bare promise would skip the catch and surface as a
+      // protocol error instead of a 404.
+      return await net.fetch(url.pathToFileURL(filePath).toString());
     } catch {
       return new Response('Not found', { status: 404 });
     }

@@ -2,6 +2,8 @@
 
 import { t, currentLocale } from '../../shared/i18n.js';
 
+export const IS_MAC = navigator.platform.includes('Mac');
+
 export function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs)) {
@@ -153,7 +155,16 @@ export function toast(message, kind = 'info') {
 
 const FOCUSABLE = 'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
 
-/** Modal helper: returns the overlay element; close via overlay.remove(). */
+// Open modals, bottom → top. Escape and the Tab trap act only on the topmost
+// one, so a confirm dialog over an editor doesn't close both at once.
+const modalStack = [];
+function topModal() {
+  // Callers may drop an overlay via overlay.remove() instead of close()
+  while (modalStack.length && !document.contains(modalStack[modalStack.length - 1])) modalStack.pop();
+  return modalStack[modalStack.length - 1];
+}
+
+/** Modal helper: returns the overlay element; close via overlay.close(). */
 export function modal(contentNode, { width = 520, onClose } = {}) {
   const overlay = el('div', { class: 'modal-overlay' });
   const box = el(
@@ -165,12 +176,16 @@ export function modal(contentNode, { width = 520, onClose } = {}) {
   const prevFocus = document.activeElement;
   const close = () => {
     overlay.remove();
+    const i = modalStack.indexOf(overlay);
+    if (i !== -1) modalStack.splice(i, 1);
     document.removeEventListener('keydown', keyHandler);
     if (prevFocus instanceof HTMLElement && document.contains(prevFocus)) prevFocus.focus();
     onClose?.();
   };
   const keyHandler = (e) => {
+    if (topModal() !== overlay) return;
     if (e.key === 'Escape') {
+      e.stopPropagation();
       close();
       return;
     }
@@ -193,9 +208,32 @@ export function modal(contentNode, { width = 520, onClose } = {}) {
   });
   document.addEventListener('keydown', keyHandler);
   document.body.append(overlay);
+  modalStack.push(overlay);
   if (!box.contains(document.activeElement)) box.focus();
   overlay.close = close;
   return overlay;
+}
+
+/**
+ * Make a clickable non-button element keyboard operable: focusable, exposed
+ * as a button, Enter/Space trigger its click, and Shift+F10 / the ContextMenu
+ * key open its context menu (when it has one) anchored at the element.
+ */
+export function keyboardClickable(node, { onContextMenu } = {}) {
+  node.setAttribute('tabindex', '0');
+  node.setAttribute('role', 'button');
+  node.addEventListener('keydown', (e) => {
+    if (e.target !== node) return; // inner buttons handle their own keys
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      node.click();
+    } else if (onContextMenu && (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey))) {
+      e.preventDefault();
+      const r = node.getBoundingClientRect();
+      onContextMenu({ x: r.left + Math.min(40, r.width / 2), y: r.top + r.height / 2 });
+    }
+  });
+  return node;
 }
 
 /** Single-line text prompt. Resolves to the entered string, or null on cancel. */

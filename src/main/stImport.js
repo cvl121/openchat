@@ -172,7 +172,7 @@ async function importCharacters(dir, res, tick) {
   const src = path.join(dir, 'characters');
   for (const file of listFiles(src, '.png')) {
     try {
-      importCharacter(path.join(src, file)); // saveCharacter suffixes colliding filenames
+      await importCharacter(path.join(src, file)); // saveCharacter suffixes colliding filenames
       res.imported.characters++;
     } catch (err) {
       res.skipped.characters++;

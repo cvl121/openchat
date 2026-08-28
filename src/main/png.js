@@ -114,7 +114,9 @@ export function normalizeCard(json) {
     // silently strip imported cards on every save.
     data: {
       ...data,
-      name: data.name ?? 'Unnamed',
+      // Always a string: a numeric/null/object name would break sorting and
+      // filename derivation for every other card in the list.
+      name: typeof data.name === 'string' && data.name.trim() ? data.name : data.name != null && typeof data.name !== 'object' ? String(data.name) : 'Unnamed',
       description: data.description ?? '',
       personality: data.personality ?? '',
       scenario: data.scenario ?? '',

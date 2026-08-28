@@ -194,6 +194,16 @@ test('persona description included', () => {
   assert.match(messages[0].content, /Bob's description: A wandering bard\./);
 });
 
+test('persona description gets {{char}}/{{user}} substitution like the card fields', () => {
+  const messages = buildMessages({
+    character,
+    chatHistory: [],
+    userName: 'Bob',
+    persona: { name: 'Bob', description: '{{user}} travels with {{char}}.' },
+  });
+  assert.match(messages[0].content, /Bob's description: Bob travels with Alice\./);
+});
+
 test('parseExampleMessages handles START markers and prefixes', () => {
   const parsed = parseExampleMessages('<START>\nBob: hi\nAlice: hello\n{{user}}: again\n{{char}}: yes', 'Alice', 'Bob');
   assert.equal(parsed.length, 4);
@@ -241,6 +251,19 @@ test('applicableWorldEntries picks global and assigned books', () => {
   ];
   const entries = applicableWorldEntries(books, 'alice.png');
   assert.deepEqual(entries.map((e) => e.content), ['g', 'a']);
+});
+
+test('world books honor their own scan_depth (default 10)', () => {
+  // "dragon" is 4th from the end: outside depth 1 + sticky 0, inside the default 10
+  const history = ['a dragon appears', 'm1', 'm2', 'm3'].map((mes, i) => ({ is_user: i % 2 === 0, mes }));
+  const entry = { keys: ['dragon'], content: 'Dragons are red.', constant: false, enabled: true, sticky: 0 };
+  const shallow = applicableWorldEntries([{ global: true, scan_depth: 1, entries: [entry] }], 'x.png');
+  assert.equal(shallow[0].scan_depth, 1);
+  const none = buildMessages({ character, chatHistory: history, userName: 'Bob', worldInfoEntries: shallow });
+  assert.equal(loreMessage(none), undefined);
+  const deep = applicableWorldEntries([{ global: true, entries: [entry] }], 'x.png');
+  const hit = buildMessages({ character, chatHistory: history, userName: 'Bob', worldInfoEntries: deep });
+  assert.match(loreMessage(hit).content, /Dragons are red\./);
 });
 
 test('resolved attachments: images ride along, text files inline, others by name', () => {
