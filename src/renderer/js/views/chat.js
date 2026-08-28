@@ -46,6 +46,10 @@ let streamingMsgEl = null; // content element receiving chunks
 // a draft (and never leaks one into another conversation). In-memory only.
 const chatDrafts = new Map(); // convKey -> {value, selStart, selEnd}
 let renderedDraftKey = null; // conversation the live #chat-input belongs to
+function stashDraft(key, input) {
+  if (input.value) chatDrafts.set(key, { value: input.value, selStart: input.selectionStart, selEnd: input.selectionEnd });
+  else chatDrafts.delete(key);
+}
 // Whether the view is anchored to the newest message. Distinct from a "near
 // bottom" proximity check: an attachment image finishing its async load can
 // grow a message by hundreds of pixels, leaving the viewport far from the
@@ -108,6 +112,31 @@ function cacheFor(msg) {
     renderCache.set(msg, entry);
   }
   return entry;
+}
+
+// Placeholder heights for offscreen messages (content-visibility: auto).
+// A flat 90px placeholder made the scrollbar stutter on long chats: each
+// message scrolled into view for the first time snapped from 90px to its
+// real height, scrollHeight jumped, and the thumb fought scroll anchoring.
+// Estimating from the text length lands close enough that the correction is
+// a few pixels, and measured heights are remembered across re-renders.
+const MSG_CHROME_PX = 60; // header + bubble padding + gap
+let heightModel = { charsPerLine: 100, linePx: 21.7 };
+function updateHeightModel(main) {
+  const fontPx = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--chat-font-size')) || 14;
+  // .msg is capped at 880px; minus avatar, gap, bubble padding and #messages padding
+  const width = Math.min(880, (main?.clientWidth || 880) - 36) - 34 - 10 - 26;
+  heightModel = { charsPerLine: Math.max(20, width / (fontPx * 0.46)), linePx: fontPx * 1.55 };
+}
+function estimateHeight(msg) {
+  const measured = cacheFor(msg).height;
+  if (measured) return measured;
+  let lines = 0;
+  for (const para of String(msg.mes ?? '').split('\n')) {
+    lines += Math.max(1, Math.ceil(para.length / heightModel.charsPerLine));
+  }
+  const images = msg.extra?.attachments?.length ? 160 : 0;
+  return Math.round(Math.max(1, lines) * heightModel.linePx + MSG_CHROME_PX + images);
 }
 
 // Reasoning-model thinking, per message, session-only (never persisted).
@@ -737,30 +766,18 @@ export function renderChat({ scrollBottom = false } = {}) {
       }
     }
   }
+  // Drafts live in chatDrafts (updated on every keystroke), not in the DOM:
+  // another view (settings, characters) clears #main, so by the time the
+  // user comes back there is no previous textarea to read the text from.
+  // Snapshot the live textarea here anyway so the cursor position is fresh.
   const prevInput = document.getElementById('chat-input');
-  let draft = prevInput
-    ? {
-        value: prevInput.value,
-        focused: document.activeElement === prevInput,
-        selStart: prevInput.selectionStart,
-        selEnd: prevInput.selectionEnd,
-      }
-    : null;
-  // Same conversation: carry the live draft across the rebuild. Different
-  // conversation: stash the old draft under its own key and pull this
-  // conversation's stored draft instead.
+  if (prevInput && renderedDraftKey != null) stashDraft(renderedDraftKey, prevInput);
   const draftKey =
     state.currentChat && state.selectedCharacter
       ? convKey(state.selectedCharacter.card.data.name, state.currentChat.file)
       : null;
-  if (renderedDraftKey !== draftKey) {
-    if (renderedDraftKey != null && draft) {
-      if (draft.value) chatDrafts.set(renderedDraftKey, draft);
-      else chatDrafts.delete(renderedDraftKey);
-    }
-    draft = draftKey ? (chatDrafts.get(draftKey) ?? null) : null;
-  }
   renderedDraftKey = draftKey;
+  const draft = draftKey ? (chatDrafts.get(draftKey) ?? null) : null;
 
   clear(main);
 
@@ -873,6 +890,7 @@ export function renderChat({ scrollBottom = false } = {}) {
   // and lastAssistantIndex scans the tail — O(n²) over a long chat otherwise
   const msgPersona = activePersona();
   const lastAssistant = lastAssistantIndex();
+  updateHeightModel(main);
   // Windowed rendering: only the newest RENDER_WINDOW messages get DOM nodes;
   // scrolling near the top prepends earlier batches seamlessly (see the
   // scroll listener below). Data — search, token estimates, prompts — always
@@ -949,7 +967,20 @@ export function renderChat({ scrollBottom = false } = {}) {
   // content-visibility size estimates, which fires resizes — an unthrottled
   // callback turns that into a resize↔scroll feedback loop on long chats.
   let resizeScrollQueued = false;
-  messagesResizeObserver = new ResizeObserver(() => {
+  messagesResizeObserver = new ResizeObserver((entries) => {
+    // Remember real heights so the next render's placeholders are exact.
+    // Skipped (offscreen) messages report their placeholder size — ignore.
+    for (const entry of entries) {
+      const node = entry.target;
+      const h = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
+      if (h > 0 && node.checkVisibility?.({ contentVisibilityAuto: true })) {
+        const msg = msgForNode.get(node);
+        if (msg && !msg.__streaming) {
+          cacheFor(msg).height = h;
+          node.style.containIntrinsicSize = `auto ${Math.round(h)}px`;
+        }
+      }
+    }
     if (!followingBottom || resizeScrollQueued) return;
     resizeScrollQueued = true;
     requestAnimationFrame(() => {
@@ -999,6 +1030,7 @@ export function renderChat({ scrollBottom = false } = {}) {
     input.style.height = `${Math.min(Math.max(input.scrollHeight + 2, base), Math.max(280, base))}px`;
   };
   input.addEventListener('input', autoGrow);
+  input.addEventListener('input', () => { if (draftKey) stashDraft(draftKey, input); });
   const inputResizer = el('div', { id: 'input-resizer', title: t('chat.resizeInputTitle') });
   inputResizer.addEventListener('mousedown', (e) => {
     e.preventDefault();
@@ -1380,8 +1412,12 @@ function messageEl(msg, index, persona = activePersona(), lastAssistant = lastAs
     );
   }
 
-  return el('div', { class: `msg${isUser ? ' user' : ''}`, dataset: { index } }, av, body);
+  const node = el('div', { class: `msg${isUser ? ' user' : ''}`, dataset: { index } }, av, body);
+  node.style.containIntrinsicSize = `auto ${estimateHeight(msg)}px`;
+  msgForNode.set(node, msg);
+  return node;
 }
+const msgForNode = new WeakMap(); // .msg element -> message, for height measurement
 
 function lastAssistantIndex() {
   const messages = state.currentChat?.messages ?? [];
@@ -1536,6 +1572,7 @@ export async function sendMessage({ asImage = false } = {}) {
       await appendToChat(userMsg);
     }
     if (input) input.value = '';
+    if (renderedDraftKey != null) chatDrafts.delete(renderedDraftKey);
   }
   // 🎨 routes this turn to the dedicated image provider/model
   await generateResponse(useImage ? { configOverride: imageApiConfig() } : {});
